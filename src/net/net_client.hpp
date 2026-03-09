@@ -55,8 +55,8 @@ private:
     boost::asio::awaitable<void> run();
     boost::asio::awaitable<void> connect_once();
     boost::asio::awaitable<void> read_loop(std::shared_ptr<SslSocket> socket);
+    boost::asio::awaitable<void> write_loop(std::shared_ptr<SslSocket> socket);
 
-    void do_send(const Envelope& env);
     void schedule_reconnect();
 
     static std::string cert_fingerprint_sha256(SSL* ssl);
@@ -75,7 +75,8 @@ private:
 
     // Outbound queue (accessed on strand_)
     std::queue<std::vector<uint8_t>> send_queue_;
-    bool                             sending_ = false;
+    boost::asio::steady_timer        send_notify_{ioc_};
+    std::shared_ptr<SslSocket>       active_socket_;
 
     // Reconnect backoff (seconds): 1→2→4→...→60
     int reconnect_delay_s_ = 1;

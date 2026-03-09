@@ -8,6 +8,7 @@
 #include <boost/asio/read.hpp>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <iomanip>
 #include <sstream>
@@ -104,12 +105,15 @@ asio::awaitable<void> NetClient::connect_once() {
 
     spdlog::info("Connected to {}:{}", cfg_.server.host, cfg_.server.port);
     connected_.store(true);
+    active_socket_ = socket;
     reconnect_delay_s_ = 1;
 
     if (callbacks_.on_connected) callbacks_.on_connected();
 
-    // Run read and write loops using the shared socket
-    co_await read_loop(socket);
+    // Run read and write loops concurrently
+    using namespace boost::asio::experimental::awaitable_operators;
+    co_await (read_loop(socket) && write_loop(socket));
+    active_socket_.reset();
 }
 
 asio::awaitable<void> NetClient::read_loop(std::shared_ptr<SslSocket> socket) {
@@ -138,8 +142,17 @@ asio::awaitable<void> NetClient::read_loop(std::shared_ptr<SslSocket> socket) {
         }
 
         if (callbacks_.on_message) callbacks_.on_message(env);
+    }
+}
 
-        // Drain outbound queue — read_loop runs on the strand, so direct access is safe
+asio::awaitable<void> NetClient::write_loop(std::shared_ptr<SslSocket> socket) {
+    while (!stopping_.load()) {
+        // Wait for notification that there's data to send
+        send_notify_.expires_at(boost::asio::steady_timer::time_point::max());
+        boost::system::error_code ec;
+        co_await send_notify_.async_wait(asio::redirect_error(use_awaitable, ec));
+
+        // Drain outbound queue
         while (!send_queue_.empty()) {
             auto frame = std::move(send_queue_.front());
             send_queue_.pop();
@@ -166,6 +179,7 @@ void NetClient::send(const Envelope& env) {
 
     asio::post(strand_, [this, f = std::move(frame)]() mutable {
         send_queue_.push(std::move(f));
+        send_notify_.cancel();  // wake write_loop
     });
 }
 
