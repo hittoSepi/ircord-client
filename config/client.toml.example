@@ -1,0 +1,31 @@
+[server]
+host = "localhost"
+port = 6667
+# Server certificate fingerprint (SHA-256 hex, set automatically on first connect)
+# cert_pin = ""
+
+[identity]
+user_id = "Alice"
+# Path to stored identity key (default: platform config dir)
+# key_file = ""
+
+[ui]
+theme = "tokyo-night"
+timestamp_format = "%H:%M"
+# Maximum messages kept in memory per channel
+max_messages = 1000
+
+[voice]
+input_device  = ""   # empty = system default
+output_device = ""   # empty = system default
+opus_bitrate  = 64000
+frame_ms      = 20
+
+[preview]
+enabled       = true
+fetch_timeout = 5    # seconds
+max_cache     = 200  # entries
+
+[tls]
+# Set to false to skip certificate verification (NOT recommended for production)
+verify_peer = true

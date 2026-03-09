@@ -1,0 +1,19 @@
+{
+  "name": "ircord-client",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "boost-asio",
+    "boost-system",
+    "openssl",
+    "protobuf",
+    "sqlitecpp",
+    "libsodium",
+    "libdatachannel",
+    "opus",
+    "curl",
+    "toml11",
+    "spdlog",
+    "catch2",
+    "ftxui"
+  ]
+}
