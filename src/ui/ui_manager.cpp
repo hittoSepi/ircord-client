@@ -135,10 +135,14 @@ void UIManager::run(SubmitFn on_submit, std::function<void()> on_quit) {
             input_line_.history_next();
             return true;
         }
-        if (event == Event::Home || event == Event::a) {
-            // Ctrl+A = Home
-            if (event == Event::Home) input_line_.move_home();
-            return event == Event::Home;
+        if (event == Event::Home) {
+            input_line_.move_home();
+            return true;
+        }
+        // Ctrl+A = move to beginning of line
+        if (event.input() == "\x01") {
+            input_line_.move_home();
+            return true;
         }
         if (event == Event::End) {
             input_line_.move_end();

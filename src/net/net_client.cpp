@@ -29,8 +29,10 @@ NetClient::NetClient(asio::io_context& ioc, const ClientConfig& cfg,
     , reconnect_timer_(ioc)
 {
     if (cfg.tls.verify_peer) {
-        ssl_ctx_.set_default_verify_paths();
         ssl_ctx_.set_verify_mode(asio::ssl::verify_peer);
+        ssl_ctx_.set_verify_callback([](bool, asio::ssl::verify_context&) {
+            return true;  // TOFU pinning handles trust via verify_cert_pin()
+        });
     } else {
         ssl_ctx_.set_verify_mode(asio::ssl::verify_none);
     }
@@ -187,7 +189,7 @@ std::string NetClient::cert_fingerprint_sha256(SSL* ssl) {
 
 bool NetClient::verify_cert_pin(SSL* ssl) {
     if (!cfg_.tls.verify_peer) return true;
-
+    spdlog::info( "verifying cert.." );
     std::string fp = cert_fingerprint_sha256(ssl);
     if (fp.empty()) {
         spdlog::warn("Could not get server certificate");

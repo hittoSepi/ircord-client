@@ -2,6 +2,7 @@
 #include "input/command_parser.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <sodium.h>
 #include <boost/asio/executor_work_guard.hpp>
 #include <iostream>
@@ -21,10 +22,14 @@ App::~App() {
 
 bool App::init(const std::filesystem::path& config_path,
                const std::string& user_id_override) {
-    // ── Logging (to stderr so it doesn't corrupt the TUI) ────────────────
-    auto logger = spdlog::stderr_color_mt("ircord");
+    // ── Logging ───────────────────────────────────────────────────────────
+    // File sink for debug output (TUI hides stderr)
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+        "ircord-debug.log", /*truncate=*/true);
+    auto logger = std::make_shared<spdlog::logger>("ircord", file_sink);
     spdlog::set_default_logger(logger);
-    spdlog::set_level(spdlog::level::warn);
+    spdlog::set_level(spdlog::level::debug);
+    spdlog::flush_on(spdlog::level::debug);
 
     // ── libsodium ─────────────────────────────────────────────────────────
     if (sodium_init() < 0) {
