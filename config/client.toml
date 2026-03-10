@@ -1,0 +1,25 @@
+[server]
+host = "localhost"
+port = 6667
+
+[identity]
+user_id = "Alice"
+
+[ui]
+theme = "tokyo-night"
+timestamp_format = "%H:%M"
+max_messages = 1000
+
+[voice]
+input_device  = ""
+output_device = ""
+opus_bitrate  = 64000
+frame_ms      = 20
+
+[preview]
+enabled       = true
+fetch_timeout = 5
+max_cache     = 200
+
+[tls]
+verify_peer = false
