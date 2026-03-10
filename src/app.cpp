@@ -49,6 +49,7 @@ bool App::init(const std::filesystem::path& config_path,
             std::getline(std::cin, entered);
         }
         cfg_.identity.user_id = entered;
+        save_config(cfg_, config_path);
     }
 
     std::filesystem::create_directories(cfg_.config_dir);

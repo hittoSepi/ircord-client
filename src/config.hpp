@@ -55,6 +55,9 @@ struct ClientConfig {
 // Load config from TOML file. Returns default config on failure.
 ClientConfig load_config(const std::filesystem::path& path);
 
+// Save config back to TOML file (creates file if missing).
+void save_config(const ClientConfig& cfg, const std::filesystem::path& path);
+
 // Returns the default platform config directory:
 //   Windows: %APPDATA%\ircord\
 //   Linux:   ~/.config/ircord/

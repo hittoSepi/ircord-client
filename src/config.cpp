@@ -2,6 +2,7 @@
 #include <toml.hpp>
 #include <spdlog/spdlog.h>
 #include <cstdlib>
+#include <fstream>
 
 namespace ircord {
 
@@ -79,6 +80,34 @@ ClientConfig load_config(const std::filesystem::path& path) {
     }
 
     return cfg;
+}
+
+void save_config(const ClientConfig& cfg, const std::filesystem::path& path) {
+    // Load existing file if present, so we preserve unknown keys
+    toml::value data;
+    if (!path.empty() && std::filesystem::exists(path)) {
+        try {
+            data = toml::parse(path.string());
+        } catch (...) {
+            data = toml::value{};
+        }
+    }
+
+    // Patch identity section
+    if (!data.contains("identity")) {
+        data["identity"] = toml::value{};
+    }
+    data["identity"]["user_id"] = cfg.identity.user_id;
+    if (!cfg.identity.key_file.empty())
+        data["identity"]["key_file"] = cfg.identity.key_file;
+
+    try {
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream ofs(path);
+        ofs << data;
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to save config '{}': {}", path.string(), e.what());
+    }
 }
 
 } // namespace ircord
