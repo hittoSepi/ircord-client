@@ -40,6 +40,17 @@ bool App::init(const std::filesystem::path& config_path,
     // ── Config ────────────────────────────────────────────────────────────
     cfg_ = load_config(config_path);
     if (!user_id_override.empty()) cfg_.identity.user_id = user_id_override;
+
+    // Prompt for username if none was set (default "user" or empty)
+    if (cfg_.identity.user_id.empty() || cfg_.identity.user_id == "user") {
+        std::string entered;
+        while (entered.empty()) {
+            std::cout << "Enter username: ";
+            std::getline(std::cin, entered);
+        }
+        cfg_.identity.user_id = entered;
+    }
+
     std::filesystem::create_directories(cfg_.config_dir);
 
     // ── Database ──────────────────────────────────────────────────────────
