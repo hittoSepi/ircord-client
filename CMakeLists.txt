@@ -158,4 +158,12 @@ else()
     target_compile_options(ircord-client PRIVATE -Wall -Wextra)
 endif()
 
+# Copy README to build output directory
+add_custom_command(TARGET ircord-client POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+        "$<TARGET_FILE_DIR:ircord-client>/README.md"
+    COMMENT "Copying README.md to output directory"
+)
+
 enable_testing()
