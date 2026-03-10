@@ -1,5 +1,5 @@
 [server]
-host = "localhost"
+host = "chat.rausku.com"
 port = 6667
 
 [identity]
@@ -22,4 +22,4 @@ fetch_timeout = 5
 max_cache     = 200
 
 [tls]
-verify_peer = false
+verify_peer = true
