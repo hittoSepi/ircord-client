@@ -1,8 +1,10 @@
 #include "net/message_handler.hpp"
 #include "net/net_client.hpp"
 #include "crypto/crypto_engine.hpp"
+#include "voice/voice_engine.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
+#include <algorithm>
 
 namespace ircord::net {
 
@@ -19,8 +21,11 @@ void MessageHandler::dispatch(const Envelope& env) {
     case MT_CHAT_ENVELOPE:  handle_chat(env);           break;
     case MT_KEY_BUNDLE:     handle_key_bundle(env);     break;
     case MT_PRESENCE:       handle_presence(env);       break;
-    case MT_VOICE_SIGNAL:   handle_voice_signal(env);   break;
-    case MT_PING:           handle_ping(env);           break;
+    case MT_VOICE_SIGNAL:      handle_voice_signal(env);      break;
+    case MT_VOICE_ROOM_JOIN:   handle_voice_room_join(env);   break;
+    case MT_VOICE_ROOM_LEAVE:  handle_voice_room_leave(env);  break;
+    case MT_VOICE_ROOM_STATE:  handle_voice_room_state(env);  break;
+    case MT_PING:              handle_ping(env);              break;
     case MT_ERROR:          handle_error(env);          break;
     default:
         spdlog::debug("Unhandled message type: {}", static_cast<int>(env.type()));
@@ -119,6 +124,11 @@ void MessageHandler::handle_chat(const Envelope& env) {
     }
     msg.type = Message::Type::Chat;
 
+    // Persist to database if callback is set
+    if (persist_fn_) {
+        persist_fn_(channel_id, msg);
+    }
+
     state_.post_ui([this, channel_id, m = std::move(msg)]() mutable {
         state_.push_message(channel_id, std::move(m));
     });
@@ -197,6 +207,85 @@ void MessageHandler::handle_voice_signal(const Envelope& env) {
         // voice_engine_->on_voice_signal(vs);
         spdlog::debug("Voice signal received from {}", vs.from_user());
     }
+}
+
+void MessageHandler::handle_voice_room_state(const Envelope& env) {
+    VoiceRoomState state;
+    if (!state.ParseFromArray(env.payload().data(),
+            static_cast<int>(env.payload().size()))) return;
+
+    // Tell VoiceEngine to set up peer connections to all participants
+    if (voice_engine_) {
+        std::vector<std::string> peers;
+        for (const auto& p : state.participants()) {
+            if (p != cfg_.identity.user_id) {
+                peers.push_back(p);
+            }
+        }
+        voice_engine_->on_room_joined(state.channel_id(), peers);
+    }
+
+    state_.post_ui([this, state]() {
+        VoiceState vs = state_.voice_snapshot();
+        vs.in_voice = true;
+        vs.active_channel = state.channel_id();
+        vs.participants.clear();
+        for (const auto& p : state.participants()) {
+            vs.participants.push_back(p);
+        }
+        state_.set_voice_state(vs);
+    });
+}
+
+void MessageHandler::handle_voice_room_join(const Envelope& env) {
+    VoiceRoomJoin join;
+    if (!join.ParseFromArray(env.payload().data(),
+            static_cast<int>(env.payload().size()))) return;
+
+    // Another user joined our room — create peer connection to them
+    if (voice_engine_) {
+        voice_engine_->on_peer_joined(join.user_id());
+    }
+
+    state_.post_ui([this, join]() {
+        VoiceState vs = state_.voice_snapshot();
+        vs.participants.push_back(join.user_id());
+        state_.set_voice_state(vs);
+
+        Message msg;
+        msg.type = Message::Type::System;
+        msg.sender_id = "system";
+        msg.content = join.user_id() + " joined voice";
+        msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        state_.push_message(join.channel_id(), std::move(msg));
+    });
+}
+
+void MessageHandler::handle_voice_room_leave(const Envelope& env) {
+    VoiceRoomLeave leave;
+    if (!leave.ParseFromArray(env.payload().data(),
+            static_cast<int>(env.payload().size()))) return;
+
+    // Remove peer connection
+    if (voice_engine_) {
+        voice_engine_->on_peer_left(leave.user_id());
+    }
+
+    state_.post_ui([this, leave]() {
+        VoiceState vs = state_.voice_snapshot();
+        auto& p = vs.participants;
+        p.erase(std::remove(p.begin(), p.end(), leave.user_id()), p.end());
+        state_.set_voice_state(vs);
+
+        Message msg;
+        msg.type = Message::Type::System;
+        msg.sender_id = "system";
+        msg.content = leave.user_id() + " left voice";
+        msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        state_.push_message(leave.channel_id(), std::move(msg));
+    });
 }
 
 void MessageHandler::handle_ping(const Envelope& env) {

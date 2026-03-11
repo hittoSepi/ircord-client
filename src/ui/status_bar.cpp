@@ -22,10 +22,24 @@ Element render_status_bar(const StatusInfo& info) {
         left.push_back(text(" | " + info.active_channel) | color(palette::fg_dark()));
     }
     if (info.in_voice) {
-        left.push_back(text(" | \U0001F3A4") | color(palette::blue()));
-        if (info.muted) left.push_back(text(" [MUTED]") | color(palette::red()));
-        for (auto& p : info.voice_participants) {
-            left.push_back(text(" " + p) | color(palette::cyan()));
+        std::string voice_text = "\U0001F3A4 " + info.voice_channel +
+            " " + std::to_string(info.voice_participants.size()) + " users";
+        if (info.muted) voice_text += " [MUTED]";
+        if (info.deafened) voice_text += " [DEAF]";
+        voice_text += " [" + std::string(info.voice_mode == "ptt" ? "PTT: F1" : "VOX") + "]";
+
+        left.push_back(text(" | ") | color(palette::fg_dark()));
+        left.push_back(text(voice_text) | color(Color::Green));
+
+        // Show speaking peers
+        if (!info.speaking_peers.empty()) {
+            std::string speaking_text = "\U0001F50A ";  // speaker icon
+            for (size_t i = 0; i < info.speaking_peers.size(); ++i) {
+                if (i > 0) speaking_text += ", ";
+                speaking_text += info.speaking_peers[i];
+            }
+            left.push_back(text(" ") | color(palette::fg_dark()));
+            left.push_back(text(speaking_text) | color(palette::cyan()));
         }
     }
 

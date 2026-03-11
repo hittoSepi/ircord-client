@@ -1,6 +1,7 @@
 #pragma once
 
 #include "state/app_state.hpp"
+#include "state/channel_state.hpp"
 #include "config.hpp"
 #include "ircord.pb.h"
 
@@ -13,6 +14,7 @@
 namespace ircord::crypto { class CryptoEngine; }
 namespace ircord::voice  { class VoiceEngine;  }
 namespace ircord::net    { class NetClient;     }
+struct Message;
 
 namespace ircord::net {
 
@@ -33,6 +35,10 @@ public:
     // Inject voice engine for voice signal dispatching
     void set_voice_engine(voice::VoiceEngine* ve) { voice_engine_ = ve; }
 
+    // Callback for message persistence (optional)
+    using PersistMsgFn = std::function<void(const std::string& channel_id, const Message& msg)>;
+    void set_persist_callback(PersistMsgFn fn) { persist_fn_ = std::move(fn); }
+
     // Called after auth OK: send KEY_UPLOAD
     void on_auth_ok();
 
@@ -51,6 +57,9 @@ private:
     void handle_key_bundle(const Envelope& env);
     void handle_presence(const Envelope& env);
     void handle_voice_signal(const Envelope& env);
+    void handle_voice_room_join(const Envelope& env);
+    void handle_voice_room_leave(const Envelope& env);
+    void handle_voice_room_state(const Envelope& env);
     void handle_ping(const Envelope& env);
     void handle_error(const Envelope& env);
 
@@ -65,6 +74,7 @@ private:
 
     NetClient*           net_client_   = nullptr;
     voice::VoiceEngine*  voice_engine_ = nullptr;
+    PersistMsgFn         persist_fn_;
 
     bool   authenticated_ = false;
     uint64_t next_seq_    = 1;

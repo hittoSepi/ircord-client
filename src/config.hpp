@@ -25,8 +25,11 @@ struct UiConfig {
 struct VoiceConfig {
     std::string input_device;
     std::string output_device;
-    int         opus_bitrate = 64000;
-    int         frame_ms     = 20;
+    int         opus_bitrate  = 64000;
+    int         frame_ms      = 20;
+    std::string mode          = "ptt";     // "ptt" or "vox"
+    std::string ptt_key       = "F1";
+    float       vad_threshold = 0.02f;
 };
 
 struct PreviewConfig {

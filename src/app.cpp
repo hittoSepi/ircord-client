@@ -5,10 +5,12 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <sodium.h>
 #include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <iostream>
 #include <chrono>
 #include <regex>
 #include <thread>
+#include <functional>
 
 namespace ircord {
 
@@ -126,11 +128,21 @@ bool App::init(const std::filesystem::path& config_path,
     net_client_ = std::make_shared<net::NetClient>(ioc_, cfg_, std::move(cb));
     msg_handler_->set_net_client(net_client_.get());
     msg_handler_->set_voice_engine(voice_.get());
+    msg_handler_->set_persist_callback([this](const std::string& channel_id, const Message& msg) {
+        persist_message(channel_id, msg);
+    });
 
     voice_->set_send_signal([this](const VoiceSignal& sig) {
         Envelope env;
         env.set_type(MT_VOICE_SIGNAL);
         env.set_payload(sig.SerializeAsString());
+        net_client_->send(env);
+    });
+
+    voice_->set_send_room_msg([this](MessageType type, const google::protobuf::Message& msg) {
+        Envelope env;
+        env.set_type(type);
+        msg.SerializeToString(env.mutable_payload());
         net_client_->send(env);
     });
 
@@ -145,6 +157,17 @@ int App::run() {
         ioc_.run();
     });
 
+    // ── Speaking indicator refresh timer (100ms) ──────────────────────────
+    auto speaking_timer = std::make_shared<boost::asio::steady_timer>(ioc_);
+    std::function<void()> refresh_speaking;
+    refresh_speaking = [this, speaking_timer, &refresh_speaking]() {
+        voice_->refresh_speaking_state();
+        speaking_timer->expires_after(std::chrono::milliseconds(100));
+        speaking_timer->async_wait([&refresh_speaking](auto) { refresh_speaking(); });
+    };
+    speaking_timer->expires_after(std::chrono::milliseconds(100));
+    speaking_timer->async_wait([&refresh_speaking](auto) { refresh_speaking(); });
+
     ui_->push_system_msg("IrssiCord v0.1.0 — connecting to " +
                           cfg_.server.host + ":" + std::to_string(cfg_.server.port));
 
@@ -152,7 +175,8 @@ int App::run() {
     ui_->run(
         [this](const std::string& line) { on_submit(line); },
         [this]()                         { ioc_.stop(); },
-        [this](int idx)                  { switch_to_channel_by_index(idx); }
+        [this](int idx)                  { switch_to_channel_by_index(idx); },
+        [this]()                         { voice_->toggle_voice_mode(); }
     );
 
     // ── Shutdown ─────────────────────────────────────────────────────────
@@ -216,13 +240,18 @@ void App::handle_command(const ParsedCommand& cmd) {
         voice_->hangup();
         ui_->push_system_msg("Call ended.");
     } else if (cmd.name == "/voice") {
-        auto ch = state_.active_channel().value_or("general");
-        if (voice_->in_voice()) {
+        if (!cmd.args.empty() && cmd.args[0] == "leave") {
+            voice_->leave_room();
+            ui_->push_system_msg("Left voice room.");
+        } else if (voice_->in_voice()) {
             voice_->leave_room();
             ui_->push_system_msg("Left voice room.");
         } else {
+            std::string ch = cmd.args.empty()
+                ? state_.active_channel().value_or("#general")
+                : cmd.args[0];
             voice_->join_room(ch);
-            ui_->push_system_msg("Joined voice room: " + ch);
+            ui_->push_system_msg("Joining voice room: " + ch + "...");
         }
     } else if (cmd.name == "/mute") {
         bool m = !state_.voice_snapshot().muted;
@@ -232,6 +261,9 @@ void App::handle_command(const ParsedCommand& cmd) {
         bool d = !state_.voice_snapshot().deafened;
         voice_->set_deafened(d);
         ui_->push_system_msg(d ? "Deafened." : "Undeafened.");
+    } else if (cmd.name == "/ptt") {
+        voice_->toggle_voice_mode();
+        ui_->push_system_msg("Voice mode: " + voice_->voice_mode());
     } else if (cmd.name == "/trust" && !cmd.args.empty()) {
         std::string peer = cmd.args[0];
         std::string sn   = crypto_->safety_number(peer, *store_);
@@ -244,12 +276,37 @@ void App::handle_command(const ParsedCommand& cmd) {
         std::string list;
         for (auto& u : users) list += u + " ";
         ui_->push_system_msg("Online: " + (list.empty() ? "(none)" : list));
+    } else if (cmd.name == "/search" && !cmd.args.empty()) {
+        // Join all args into query string
+        std::string query;
+        for (size_t i = 0; i < cmd.args.size(); ++i) {
+            if (i > 0) query += " ";
+            query += cmd.args[i];
+        }
+        if (store_) {
+            db::LocalStore::SearchFilters filters;
+            filters.limit = 20;
+            auto results = store_->search_messages(query, filters);
+            ui_->push_system_msg("Search results for '" + query + "':");
+            if (results.empty()) {
+                ui_->push_system_msg("  (no results)");
+            } else {
+                for (const auto& r : results) {
+                    std::string preview = r.content;
+                    if (preview.length() > 60) preview = preview.substr(0, 57) + "...";
+                    // Format: [channel] <sender>: content
+                    ui_->push_system_msg("  [" + r.channel_id + "] <" + r.sender_id + ">: " + preview);
+                }
+            }
+        } else {
+            ui_->push_system_msg("Search not available (no database).");
+        }
     } else if (cmd.name == "/clear") {
         ui_->push_system_msg("(cleared)");
     } else if (cmd.name == "/help") {
         ui_->push_system_msg(
             "Commands: /join /part /msg /call /accept /hangup /voice "
-            "/mute /deafen /trust /names /clear /quit");
+            "/mute /deafen /ptt /trust /names /search /clear /quit");
     } else {
         ui_->push_system_msg("Unknown command: " + cmd.name);
     }
@@ -282,6 +339,17 @@ void App::send_chat(const std::string& text) {
         std::chrono::system_clock::now().time_since_epoch()).count();
     state_.push_message(active, local_msg);
     ui_->notify();
+
+    // Persist to database for search
+    if (store_) {
+        db::LocalStore::MessageRow row;
+        row.channel_id   = active;
+        row.sender_id    = local_id;
+        row.content      = text;
+        row.timestamp_ms = local_msg.timestamp_ms;
+        row.type         = static_cast<int>(Message::Type::Chat);
+        store_->save_message(row);
+    }
 
     // Encrypt and send (for DMs with no session yet, msg_handler queues
     // the plaintext and sends KEY_REQUEST; the message is flushed when
@@ -320,6 +388,18 @@ void App::send_chat(const std::string& text) {
             });
         }
     }
+}
+
+// Helper to save incoming messages to database
+void App::persist_message(const std::string& channel_id, const Message& msg) {
+    if (!store_) return;
+    db::LocalStore::MessageRow row;
+    row.channel_id   = channel_id;
+    row.sender_id    = msg.sender_id;
+    row.content      = msg.content;
+    row.timestamp_ms = msg.timestamp_ms;
+    row.type         = static_cast<int>(msg.type);
+    store_->save_message(row);
 }
 
 void App::switch_channel(int delta) {

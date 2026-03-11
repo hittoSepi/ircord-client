@@ -59,6 +59,17 @@ public:
     std::string local_user_id() const;
     void set_local_user_id(const std::string& id);
 
+    // ── Search results ────────────────────────────────────────────────────
+    struct SearchResult {
+        std::string channel_id;
+        std::string sender_id;
+        std::string content;
+        int64_t     timestamp_ms;
+    };
+    void set_search_results(const std::vector<SearchResult>& results);
+    std::vector<SearchResult> search_results() const;
+    void clear_search_results();
+
 private:
     mutable std::shared_mutex mu_;
 
@@ -71,6 +82,8 @@ private:
 
     bool        connected_     = false;
     std::string local_user_id_;
+
+    std::vector<SearchResult> search_results_;
 
     // UI queue
     std::mutex                       ui_queue_mu_;

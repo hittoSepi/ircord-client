@@ -61,6 +61,9 @@ ClientConfig load_config(const std::filesystem::path& path) {
             if (v.contains("output_device")) cfg.voice.output_device = toml::find<std::string>(v, "output_device");
             if (v.contains("opus_bitrate"))  cfg.voice.opus_bitrate  = toml::find<int>(v, "opus_bitrate");
             if (v.contains("frame_ms"))      cfg.voice.frame_ms      = toml::find<int>(v, "frame_ms");
+            if (v.contains("mode"))          cfg.voice.mode          = toml::find<std::string>(v, "mode");
+            if (v.contains("ptt_key"))       cfg.voice.ptt_key       = toml::find<std::string>(v, "ptt_key");
+            if (v.contains("vad_threshold")) cfg.voice.vad_threshold = static_cast<float>(toml::find<double>(v, "vad_threshold"));
         }
 
         if (data.contains("preview")) {

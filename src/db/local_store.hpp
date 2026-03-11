@@ -73,6 +73,28 @@ public:
     void cache_preview(const std::string& url, const std::string& title,
                        const std::string& description);
 
+    // ── Message persistence & search ──────────────────────────────────────
+    struct MessageRow {
+        int64_t     id;
+        std::string channel_id;
+        std::string sender_id;
+        std::string content;
+        int64_t     timestamp_ms;
+        int         type;
+    };
+    void save_message(const MessageRow& msg);
+    
+    // Search messages with optional filters
+    struct SearchFilters {
+        std::optional<std::string> channel_id;   // search specific channel only
+        std::optional<std::string> sender_id;    // from specific user
+        std::optional<int64_t>     after_ms;     // after timestamp
+        std::optional<int64_t>     before_ms;    // before timestamp
+        int                        limit = 50;   // max results
+    };
+    std::vector<MessageRow> search_messages(const std::string& query, 
+                                            const SearchFilters& filters = {});
+
     // Direct DB access for migrations
     SQLite::Database& db() { return db_; }
 

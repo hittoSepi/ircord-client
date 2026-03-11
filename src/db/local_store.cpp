@@ -282,4 +282,59 @@ void LocalStore::cache_preview(const std::string& url, const std::string& title,
     q.exec();
 }
 
+// ── Message persistence & search ──────────────────────────────────────────────
+
+void LocalStore::save_message(const MessageRow& msg) {
+    std::lock_guard lk(mu_);
+    SQLite::Statement q(db_,
+        "INSERT INTO messages (channel_id, sender_id, content, timestamp_ms, type) "
+        "VALUES (?, ?, ?, ?, ?)");
+    q.bind(1, msg.channel_id);
+    q.bind(2, msg.sender_id);
+    q.bind(3, msg.content);
+    q.bind(4, msg.timestamp_ms);
+    q.bind(5, msg.type);
+    q.exec();
+}
+
+std::vector<LocalStore::MessageRow> LocalStore::search_messages(
+    const std::string& query, const SearchFilters& filters) {
+    std::vector<MessageRow> results;
+    std::lock_guard lk(mu_);
+
+    // Build dynamic query based on filters
+    std::string sql = 
+        "SELECT m.rowid, m.channel_id, m.sender_id, m.content, m.timestamp_ms, m.type "
+        "FROM messages m "
+        "JOIN messages_fts fts ON m.rowid = fts.rowid "
+        "WHERE messages_fts MATCH ? ";
+    
+    if (filters.channel_id) sql += "AND m.channel_id = ? ";
+    if (filters.sender_id)  sql += "AND m.sender_id = ? ";
+    if (filters.after_ms)   sql += "AND m.timestamp_ms > ? ";
+    if (filters.before_ms)  sql += "AND m.timestamp_ms < ? ";
+    sql += "ORDER BY m.timestamp_ms DESC LIMIT ?";
+
+    SQLite::Statement q(db_, sql);
+    int bind_idx = 1;
+    q.bind(bind_idx++, query);
+    if (filters.channel_id) q.bind(bind_idx++, *filters.channel_id);
+    if (filters.sender_id)  q.bind(bind_idx++, *filters.sender_id);
+    if (filters.after_ms)   q.bind(bind_idx++, *filters.after_ms);
+    if (filters.before_ms)  q.bind(bind_idx++, *filters.before_ms);
+    q.bind(bind_idx++, filters.limit);
+
+    while (q.executeStep()) {
+        MessageRow row;
+        row.id           = q.getColumn(0).getInt64();
+        row.channel_id   = q.getColumn(1).getString();
+        row.sender_id    = q.getColumn(2).getString();
+        row.content      = q.getColumn(3).getString();
+        row.timestamp_ms = q.getColumn(4).getInt64();
+        row.type         = q.getColumn(5).getInt();
+        results.push_back(std::move(row));
+    }
+    return results;
+}
+
 } // namespace ircord::db

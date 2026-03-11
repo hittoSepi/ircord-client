@@ -63,7 +63,11 @@ Element UIManager::build_document(int term_rows) {
     auto vs           = state_.voice_snapshot();
     si.in_voice       = vs.in_voice;
     si.muted          = vs.muted;
+    si.deafened       = vs.deafened;
+    si.voice_channel  = vs.active_channel;
+    si.voice_mode     = vs.voice_mode;
     si.voice_participants = vs.participants;
+    si.speaking_peers = vs.speaking_peers;
     si.online_users   = state_.online_users();
     auto status_el = render_status_bar(si);
 
@@ -94,7 +98,8 @@ Element UIManager::build_document(int term_rows) {
 
 void UIManager::run(SubmitFn on_submit,
                     std::function<void()> on_quit,
-                    std::function<void(int)> on_channel_switch) {
+                    std::function<void(int)> on_channel_switch,
+                    PttToggleFn on_ptt_toggle) {
     auto renderer = Renderer([&] {
         // Drain cross-thread UI updates before rendering
         state_.drain_ui_queue();
@@ -106,6 +111,12 @@ void UIManager::run(SubmitFn on_submit,
     auto event_handler = CatchEvent(renderer, [&](Event event) -> bool {
         if (event == Event::Custom) {
             // Posted by notify() — just triggers a redraw
+            return true;
+        }
+        // F1 — PTT toggle (since FTXUI doesn't support key-release, use toggle)
+        if (event == Event::F1) {
+            ptt_toggled_ = !ptt_toggled_;
+            if (on_ptt_toggle) on_ptt_toggle();
             return true;
         }
         if (event == Event::Return) {

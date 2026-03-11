@@ -6,7 +6,7 @@
 namespace ircord::voice {
 
 VoiceEngine::VoiceEngine(AppState& state, const ClientConfig& cfg)
-    : state_(state), cfg_(cfg) {}
+    : state_(state), cfg_(cfg), voice_mode_(cfg.voice.mode) {}
 
 VoiceEngine::~VoiceEngine() {
     hangup();
@@ -22,6 +22,15 @@ rtc::Configuration VoiceEngine::make_rtc_config() {
 // ── Room ──────────────────────────────────────────────────────────────────────
 
 void VoiceEngine::join_room(const std::string& channel_id) {
+    // Send VoiceRoomJoin to server — audio setup happens in on_room_joined()
+    // when we receive VoiceRoomState back
+    VoiceRoomJoin join;
+    join.set_channel_id(channel_id);
+    if (send_room_msg_) send_room_msg_(MT_VOICE_ROOM_JOIN, join);
+}
+
+void VoiceEngine::on_room_joined(const std::string& channel_id,
+                                  const std::vector<std::string>& peers) {
     if (in_voice_) leave_room();
 
     active_channel_ = channel_id;
@@ -29,22 +38,44 @@ void VoiceEngine::join_room(const std::string& channel_id) {
     muted_          = false;
     deafened_       = false;
 
-    // Open audio device
     audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
         [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
         [this](float* out, uint32_t frames)        { mix_output(out, frames); });
     audio_.start();
 
+    // We are the joiner — create PeerConnections to all existing participants as offerer
+    for (const auto& peer_id : peers) {
+        get_or_create_peer(peer_id, /*is_offerer=*/true);
+    }
+
     VoiceState vs = state_.voice_snapshot();
     vs.in_voice       = true;
     vs.active_channel = channel_id;
+    vs.voice_mode     = voice_mode_;
     state_.set_voice_state(vs);
 
-    spdlog::info("Joined voice room: {}", channel_id);
+    spdlog::info("Voice room joined: {} with {} peers", channel_id, peers.size());
+}
+
+void VoiceEngine::on_peer_joined(const std::string& peer_id) {
+    if (!in_voice_) return;
+    // New peer joined — they will offer to us, we wait for their OFFER.
+    // No action needed here — the peer will create PeerConnection as offerer
+    // and we'll handle it in on_voice_signal(OFFER).
+    spdlog::info("Peer {} joined voice room", peer_id);
+}
+
+void VoiceEngine::on_peer_left(const std::string& peer_id) {
+    if (!in_voice_) return;
+    std::lock_guard lk(mu_);
+    peers_.erase(peer_id);
+    spdlog::info("Peer {} left voice room", peer_id);
 }
 
 void VoiceEngine::leave_room() {
     if (!in_voice_) return;
+
+    std::string channel = active_channel_;
 
     audio_.stop();
 
@@ -61,6 +92,11 @@ void VoiceEngine::leave_room() {
     vs.active_channel  = {};
     vs.participants    = {};
     state_.set_voice_state(vs);
+
+    // Notify server
+    VoiceRoomLeave leave;
+    leave.set_channel_id(channel);
+    if (send_room_msg_) send_room_msg_(MT_VOICE_ROOM_LEAVE, leave);
 }
 
 // ── 1:1 call ──────────────────────────────────────────────────────────────────
@@ -292,6 +328,15 @@ void VoiceEngine::setup_peer_callbacks(std::shared_ptr<PeerConn> peer) {
             for (size_t i = 12; i < data.size(); ++i)
                 opus.push_back(std::to_integer<uint8_t>(data[i]));
             auto pcm = peer->codec.decode(opus);
+            
+            // Calculate energy for speaking indicator
+            if (!pcm.empty()) {
+                float energy = 0.0f;
+                for (float s : pcm) energy += s * s;
+                peer->last_energy = std::sqrt(energy / pcm.size());
+                peer->last_packet_time = std::chrono::steady_clock::now();
+            }
+            
             peer->jitter_buf.push(seq, std::move(pcm));
         });
     });
@@ -299,8 +344,30 @@ void VoiceEngine::setup_peer_callbacks(std::shared_ptr<PeerConn> peer) {
 
 // ── Audio I/O ─────────────────────────────────────────────────────────────────
 
+void VoiceEngine::toggle_voice_mode() {
+    voice_mode_ = (voice_mode_ == "ptt") ? "vox" : "ptt";
+    VoiceState vs = state_.voice_snapshot();
+    vs.voice_mode = voice_mode_;
+    state_.set_voice_state(vs); // trigger UI refresh
+}
+
 void VoiceEngine::on_capture(const float* pcm, uint32_t frames) {
     if (muted_ || !in_voice_) return;
+
+    // PTT/VOX gate
+    if (voice_mode_ == "ptt" && !ptt_active_) return;
+
+    if (voice_mode_ == "vox") {
+        // Simple energy-based VAD
+        float energy = 0.0f;
+        uint32_t n = std::min(frames, static_cast<uint32_t>(OpusCodec::kFrameSamples));
+        for (uint32_t i = 0; i < n; ++i) {
+            energy += pcm[i] * pcm[i];
+        }
+        energy = std::sqrt(energy / n);
+        if (energy < cfg_.voice.vad_threshold) return;
+    }
+
     if (frames < static_cast<uint32_t>(OpusCodec::kFrameSamples)) return;
 
     std::vector<float> pcm_vec(pcm, pcm + OpusCodec::kFrameSamples);
@@ -352,6 +419,32 @@ void VoiceEngine::mix_output(float* out, uint32_t frames) {
     // Soft clip to [-1, 1]
     for (uint32_t i = 0; i < frames; ++i) {
         out[i] = std::max(-1.0f, std::min(1.0f, out[i]));
+    }
+}
+
+std::vector<std::string> VoiceEngine::get_speaking_peers() const {
+    std::vector<std::string> speaking;
+    std::lock_guard lk(mu_);
+    auto now = std::chrono::steady_clock::now();
+    for (const auto& [pid, peer] : peers_) {
+        if (!peer->connected) continue;
+        // Consider speaking if energy above threshold and packet received recently (< 500ms)
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - peer->last_packet_time).count();
+        if (peer->last_energy > 0.01f && elapsed < 500) {
+            speaking.push_back(pid);
+        }
+    }
+    return speaking;
+}
+
+void VoiceEngine::refresh_speaking_state() {
+    if (!in_voice_) return;
+    auto speaking = get_speaking_peers();
+    VoiceState vs = state_.voice_snapshot();
+    if (vs.speaking_peers != speaking) {
+        vs.speaking_peers = std::move(speaking);
+        state_.set_voice_state(vs);
     }
 }
 

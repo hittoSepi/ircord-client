@@ -172,4 +172,21 @@ void AppState::set_local_user_id(const std::string& id) {
     local_user_id_ = id;
 }
 
+// ── Search results ────────────────────────────────────────────────────────────
+
+void AppState::set_search_results(const std::vector<SearchResult>& results) {
+    std::unique_lock lk(mu_);
+    search_results_ = results;
+}
+
+std::vector<AppState::SearchResult> AppState::search_results() const {
+    std::shared_lock lk(mu_);
+    return search_results_;
+}
+
+void AppState::clear_search_results() {
+    std::unique_lock lk(mu_);
+    search_results_.clear();
+}
+
 } // namespace ircord

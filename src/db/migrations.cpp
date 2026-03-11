@@ -3,7 +3,7 @@
 
 namespace ircord::db {
 
-static constexpr int kCurrentVersion = 3;
+static constexpr int kCurrentVersion = 4;
 
 // Migration 1: core message & identity tables
 static void migration_1(SQLite::Database& db) {
@@ -87,6 +87,32 @@ static void migration_3(SQLite::Database& db) {
     )");
 }
 
+// Migration 4: Full-text search for messages using FTS5
+static void migration_4(SQLite::Database& db) {
+    db.exec(R"(
+        -- FTS5 virtual table for message content search
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+            content,
+            content_rowid=rowid,
+            content='messages'
+        );
+
+        -- Trigger to keep FTS index updated on insert
+        CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END;
+
+        -- Trigger to keep FTS index updated on delete
+        CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content) 
+            VALUES ('delete', old.rowid, old.content);
+        END;
+
+        -- Index for faster sender-based queries
+        CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, timestamp_ms);
+    )");
+}
+
 void apply_migrations(SQLite::Database& db) {
     // Enable WAL mode for performance
     db.exec("PRAGMA journal_mode=WAL;");
@@ -108,6 +134,10 @@ void apply_migrations(SQLite::Database& db) {
     if (version < 3) {
         spdlog::info("Applying DB migration 3");
         migration_3(db);
+    }
+    if (version < 4) {
+        spdlog::info("Applying DB migration 4");
+        migration_4(db);
     }
 
     if (version < kCurrentVersion) {
