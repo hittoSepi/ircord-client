@@ -34,7 +34,15 @@ int main(int argc, char* argv[]) {
 
     // Default config path
     if (config_path.empty()) {
-        config_path = ircord::default_config_dir() / "client.toml";
+
+        // check if app path has client.toml
+       
+        if ( std::filesystem::exists( "./client.toml" )) {
+            config_path = "./client.toml";
+        }
+        else {
+            config_path = ircord::default_config_dir() / "client.toml";
+        }
     }
 
     ircord::App app;

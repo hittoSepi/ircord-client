@@ -151,7 +151,8 @@ int App::run() {
     // ── FTXUI event loop (blocks main thread) ─────────────────────────────
     ui_->run(
         [this](const std::string& line) { on_submit(line); },
-        [this]()                         { ioc_.stop(); }
+        [this]()                         { ioc_.stop(); },
+        [this](int idx)                  { switch_to_channel_by_index(idx); }
     );
 
     // ── Shutdown ─────────────────────────────────────────────────────────
@@ -164,7 +165,6 @@ int App::run() {
 }
 
 void App::on_submit(const std::string& line) {
-    tab_completer_.reset();
     if (line.empty()) return;
 
     if (line[0] == '/') {
@@ -185,7 +185,16 @@ void App::handle_command(const ParsedCommand& cmd) {
         ui_->push_system_msg("Goodbye.");
         return;
     }
-    if (cmd.name == "/join" && !cmd.args.empty()) {
+    if (cmd.name == "/part") {
+        auto ch = state_.active_channel().value_or("");
+        if (ch.empty() || ch == "server") {
+            ui_->push_system_msg("Cannot leave the server channel.");
+        } else {
+            std::string left = ch;          // copy before removal
+            state_.remove_channel(left);    // active channel updates first
+            ui_->push_system_msg("Left " + left + ".");  // message goes to new active ch
+        }
+    } else if (cmd.name == "/join" && !cmd.args.empty()) {
         switch_to_channel(cmd.args[0]);
     } else if (cmd.name == "/msg" && cmd.args.size() >= 2) {
         std::string target = cmd.args[0];
@@ -239,7 +248,7 @@ void App::handle_command(const ParsedCommand& cmd) {
         ui_->push_system_msg("(cleared)");
     } else if (cmd.name == "/help") {
         ui_->push_system_msg(
-            "Commands: /join /msg /call /accept /hangup /voice "
+            "Commands: /join /part /msg /call /accept /hangup /voice "
             "/mute /deafen /trust /names /clear /quit");
     } else {
         ui_->push_system_msg("Unknown command: " + cmd.name);
@@ -257,6 +266,10 @@ void App::send_chat(const std::string& text) {
         ui_->push_system_msg("No active channel.");
         return;
     }
+    if (active == "server") {
+        ui_->push_system_msg("Cannot send messages here. Use /join #channel or /msg <user>.");
+        return;
+    }
 
     const std::string& local_id = cfg_.identity.user_id;
 
@@ -270,15 +283,12 @@ void App::send_chat(const std::string& text) {
     state_.push_message(active, local_msg);
     ui_->notify();
 
-    // Encrypt and send
+    // Encrypt and send (for DMs with no session yet, msg_handler queues
+    // the plaintext and sends KEY_REQUEST; the message is flushed when
+    // KEY_BUNDLE arrives in handle_key_bundle).
     auto env = crypto_->encrypt(local_id, active, text,
-        [this](const std::string& recipient_id) {
-            KeyRequest kr;
-            kr.set_user_id(recipient_id);
-            Envelope req;
-            req.set_type(MT_KEY_REQUEST);
-            req.set_payload(kr.SerializeAsString());
-            net_client_->send(req);
+        [this, text](const std::string& recipient_id) {
+            msg_handler_->request_key(recipient_id, text);
         });
 
     if (!env.sender_id().empty()) {
@@ -320,6 +330,12 @@ void App::switch_channel(int delta) {
     int  idx = (it == channels.end()) ? 0 : static_cast<int>(it - channels.begin());
     idx = (idx + delta + static_cast<int>(channels.size())) % static_cast<int>(channels.size());
     switch_to_channel(channels[idx]);
+}
+
+void App::switch_to_channel_by_index(int index) {
+    auto channels = state_.channel_list();
+    if (index < 0 || index >= static_cast<int>(channels.size())) return;
+    switch_to_channel(channels[index]);
 }
 
 void App::switch_to_channel(const std::string& channel_id) {

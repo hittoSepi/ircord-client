@@ -9,7 +9,6 @@
 #include "voice/voice_engine.hpp"
 #include "preview/link_previewer.hpp"
 #include "db/local_store.hpp"
-#include "input/tab_complete.hpp"
 #include "input/command_parser.hpp"
 
 #include <boost/asio/io_context.hpp>
@@ -38,6 +37,8 @@ private:
     void send_chat(const std::string& text);
     void switch_channel(int delta);
     void switch_to_channel(const std::string& channel_id);
+    // Called by UIManager on Alt+1..9; index is 0-based into sorted channel list.
+    void switch_to_channel_by_index(int index);
 
     ClientConfig cfg_;
 
@@ -53,8 +54,6 @@ private:
     std::unique_ptr<net::MessageHandler>    msg_handler_;
 
     std::thread io_thread_;
-
-    TabCompleter tab_completer_;
 };
 
 } // namespace ircord

@@ -269,7 +269,33 @@ ChatEnvelope CryptoEngine::encrypt(const std::string& sender_id,
     env.set_sender_id(sender_id);
     env.set_recipient_id(recipient_id);
 
-    // Check if we have a session for this recipient
+    const std::vector<uint8_t> plaintext_bytes(plaintext.begin(), plaintext.end());
+
+    // ── Group channel (#channel): use Sender Key, no key bundle request ───
+    if (!recipient_id.empty() && recipient_id[0] == '#') {
+        try {
+            auto ct = group_session_->encrypt(recipient_id, plaintext_bytes);
+            env.set_ciphertext(ct.data(), ct.size());
+            env.set_ciphertext_type(4);  // SENDER_KEY_MESSAGE
+            return env;
+        } catch (...) {
+            // No sender key chain yet — create one and include SKDM so receivers
+            // can initialize their decryption state from this first message.
+            try {
+                auto skdm = group_session_->create_session(recipient_id);
+                auto ct   = group_session_->encrypt(recipient_id, plaintext_bytes);
+                env.set_ciphertext(ct.data(), ct.size());
+                env.set_ciphertext_type(4);
+                env.set_skdm(skdm.data(), skdm.size());
+                return env;
+            } catch (const std::exception& e) {
+                spdlog::error("Group encrypt failed for {}: {}", recipient_id, e.what());
+                return {};
+            }
+        }
+    }
+
+    // ── DM (user_id): use 1:1 Signal session ─────────────────────────────
     signal_protocol_address addr{};
     addr.name       = recipient_id.c_str();
     addr.name_len   = recipient_id.size();
@@ -317,6 +343,37 @@ DecryptResult CryptoEngine::decrypt(const ChatEnvelope& env) {
     DecryptResult result;
     result.sender_id = env.sender_id();
 
+    const auto& ct_str = env.ciphertext();
+    const uint8_t* ct  = reinterpret_cast<const uint8_t*>(ct_str.data());
+    size_t ct_len       = ct_str.size();
+
+    // ── Group channel (Sender Key) ────────────────────────────────────────
+    if (env.ciphertext_type() == 4) {
+        const std::string& channel_id = env.recipient_id();
+
+        // Process SKDM if present (first message from this sender in channel).
+        // This establishes the sender key state needed for decryption.
+        if (!env.skdm().empty()) {
+            const auto& skdm_str = env.skdm();
+            group_session_->process_sender_key_distribution(
+                channel_id, env.sender_id(), 1 /*device_id*/,
+                std::vector<uint8_t>(skdm_str.begin(), skdm_str.end()));
+        }
+
+        try {
+            auto pt = group_session_->decrypt(
+                channel_id, env.sender_id(), 1 /*device_id*/,
+                std::vector<uint8_t>(ct, ct + ct_len));
+            result.plaintext.assign(pt.begin(), pt.end());
+            result.success = true;
+        } catch (const std::exception& e) {
+            spdlog::warn("Group decrypt failed ({}/{}): {}",
+                         channel_id, env.sender_id(), e.what());
+        }
+        return result;
+    }
+
+    // ── DM (1:1 Signal session) ───────────────────────────────────────────
     signal_protocol_address addr{};
     addr.name      = env.sender_id().c_str();
     addr.name_len  = env.sender_id().size();
@@ -328,10 +385,6 @@ DecryptResult CryptoEngine::decrypt(const ChatEnvelope& env) {
         spdlog::warn("session_cipher_create failed for {}: {}", env.sender_id(), rc);
         return result;
     }
-
-    const auto& ct_str = env.ciphertext();
-    const uint8_t* ct  = reinterpret_cast<const uint8_t*>(ct_str.data());
-    size_t ct_len       = ct_str.size();
 
     signal_buffer* plaintext_buf = nullptr;
 

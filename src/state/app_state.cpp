@@ -71,6 +71,17 @@ ChannelState AppState::channel_snapshot(const std::string& channel_id) const {
     return it->second;
 }
 
+void AppState::remove_channel(const std::string& channel_id) {
+    std::unique_lock lk(mu_);
+    channels_.erase(channel_id);
+    if (active_channel_ == channel_id) {
+        // Fall back to "server" if present, else first available, else empty
+        if (channels_.count("server"))          active_channel_ = "server";
+        else if (!channels_.empty())            active_channel_ = channels_.begin()->first;
+        else                                    active_channel_.clear();
+    }
+}
+
 void AppState::scroll_up(const std::string& channel_id, int lines) {
     std::unique_lock lk(mu_);
     auto it = channels_.find(channel_id);

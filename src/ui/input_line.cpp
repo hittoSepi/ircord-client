@@ -79,6 +79,26 @@ void InputLine::clear() {
     hist_pos_ = -1;
 }
 
+void InputLine::set_text(const std::string& utf8) {
+    buf_.clear();
+    size_t i = 0;
+    while (i < utf8.size()) {
+        unsigned char c = static_cast<unsigned char>(utf8[i]);
+        char32_t cp = 0;
+        size_t bytes = 0;
+        if      (c < 0x80) { cp = c;        bytes = 1; }
+        else if (c < 0xE0) { cp = c & 0x1F; bytes = 2; }
+        else if (c < 0xF0) { cp = c & 0x0F; bytes = 3; }
+        else               { cp = c & 0x07; bytes = 4; }
+        for (size_t b = 1; b < bytes && i + b < utf8.size(); ++b)
+            cp = (cp << 6) | (static_cast<unsigned char>(utf8[i + b]) & 0x3F);
+        buf_.push_back(cp);
+        i += bytes;
+    }
+    cursor_   = buf_.size();
+    hist_pos_ = -1;
+}
+
 std::string InputLine::text() const { return to_utf8(buf_); }
 int         InputLine::cursor_col() const { return static_cast<int>(cursor_); }
 

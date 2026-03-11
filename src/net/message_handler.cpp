@@ -131,12 +131,42 @@ void MessageHandler::handle_key_bundle(const Envelope& env) {
         return;
     }
 
-    // Find who we requested for
-    // The key bundle doesn't directly say who it's for — we track pending requests
-    // The server sends bundles in response to KEY_REQUEST which had a user_id.
-    // For now, we process against pending sends.
-    // TODO: wire the recipient_id through the proto or track it externally.
-    spdlog::debug("Received KeyBundle");
+    const std::string& recipient_id = bundle.recipient_for();
+    if (recipient_id.empty()) {
+        spdlog::warn("KeyBundle missing recipient_for field — ignoring");
+        return;
+    }
+
+    // Establish X3DH session with the recipient
+    crypto_.on_key_bundle(bundle, recipient_id);
+    spdlog::info("Established X3DH session with '{}'", recipient_id);
+
+    // Flush pending plaintext if we queued one while waiting for this bundle
+    auto it = pending_sends_.find(recipient_id);
+    if (it == pending_sends_.end()) return;
+
+    std::string plaintext = std::move(it->second);
+    pending_sends_.erase(it);
+
+    ChatEnvelope chat = crypto_.encrypt(
+        cfg_.identity.user_id, recipient_id, plaintext,
+        [](const std::string&) { /* session exists now — no re-request needed */ });
+
+    if (!chat.sender_id().empty()) {
+        send_envelope(MT_CHAT_ENVELOPE, chat);
+        spdlog::debug("Flushed pending DM to '{}'", recipient_id);
+    } else {
+        spdlog::error("Re-encrypt failed for pending DM to '{}'", recipient_id);
+    }
+}
+
+void MessageHandler::request_key(const std::string& recipient_id,
+                                  const std::string& plaintext) {
+    pending_sends_[recipient_id] = plaintext;
+    KeyRequest kr;
+    kr.set_user_id(recipient_id);
+    send_envelope(MT_KEY_REQUEST, kr);
+    spdlog::debug("KEY_REQUEST sent for '{}', plaintext queued", recipient_id);
 }
 
 void MessageHandler::handle_presence(const Envelope& env) {

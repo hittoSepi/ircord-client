@@ -43,6 +43,10 @@ public:
 
     bool empty() const { return buf_.empty(); }
 
+    // Replace buffer content with a UTF-8 string (used by Tab completion).
+    // Cursor moves to end; does not affect history.
+    void set_text(const std::string& utf8);
+
 private:
     std::u32string buf_;
     size_t         cursor_ = 0;

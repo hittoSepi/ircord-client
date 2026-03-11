@@ -32,6 +32,8 @@ public:
     void set_active_channel(const std::string& channel_id);
     std::vector<std::string> channel_list() const;
     ChannelState channel_snapshot(const std::string& channel_id) const;
+    // Remove a channel from state. If it was active, fall back to "server".
+    void remove_channel(const std::string& channel_id);
 
     // Scroll
     void scroll_up(const std::string& channel_id, int lines);

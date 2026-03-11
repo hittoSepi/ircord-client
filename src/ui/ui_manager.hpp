@@ -2,6 +2,8 @@
 
 #include "state/app_state.hpp"
 #include "ui/input_line.hpp"
+#include "input/tab_complete.hpp"
+#include "input/command_parser.hpp"
 #include "config.hpp"
 
 #include <ftxui/component/screen_interactive.hpp>
@@ -23,7 +25,10 @@ public:
     UIManager(AppState& state, const ClientConfig& cfg);
 
     // Build the component tree and run the FTXUI event loop (blocks).
-    void run(SubmitFn on_submit, std::function<void()> on_quit);
+    // on_channel_switch(i): called with 0-based index when user presses Alt+1..9.
+    void run(SubmitFn on_submit,
+             std::function<void()> on_quit,
+             std::function<void(int)> on_channel_switch = {});
 
     // Push a system message to the active (or server) channel.
     // Thread-safe: safe to call from IO/preview threads.
@@ -41,6 +46,7 @@ private:
     AppState&           state_;
     const ClientConfig& cfg_;
     InputLine           input_line_;
+    TabCompleter        tab_completer_;
 
     ftxui::ScreenInteractive screen_{ftxui::ScreenInteractive::Fullscreen()};
 };

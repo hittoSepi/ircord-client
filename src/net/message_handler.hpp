@@ -39,6 +39,10 @@ public:
     // Track auth state for UI feedback
     bool is_authenticated() const { return authenticated_; }
 
+    // Send KEY_REQUEST for a DM recipient and track the pending plaintext
+    // so it can be sent once the KEY_BUNDLE arrives.
+    void request_key(const std::string& recipient_id, const std::string& plaintext);
+
 private:
     void handle_auth_challenge(const Envelope& env);
     void handle_auth_ok(const Envelope& env);

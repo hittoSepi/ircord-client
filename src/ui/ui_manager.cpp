@@ -92,7 +92,9 @@ Element UIManager::build_document(int term_rows) {
     }) | bgcolor(palette::bg());
 }
 
-void UIManager::run(SubmitFn on_submit, std::function<void()> on_quit) {
+void UIManager::run(SubmitFn on_submit,
+                    std::function<void()> on_quit,
+                    std::function<void(int)> on_channel_switch) {
     auto renderer = Renderer([&] {
         // Drain cross-thread UI updates before rendering
         state_.drain_ui_queue();
@@ -107,15 +109,18 @@ void UIManager::run(SubmitFn on_submit, std::function<void()> on_quit) {
             return true;
         }
         if (event == Event::Return) {
+            tab_completer_.reset();
             std::string line = input_line_.commit();
             if (!line.empty() && on_submit) on_submit(line);
             return true;
         }
         if (event == Event::Backspace) {
+            tab_completer_.reset();
             input_line_.backspace();
             return true;
         }
         if (event == Event::Delete) {
+            tab_completer_.reset();
             input_line_.del_forward();
             return true;
         }
@@ -169,14 +174,29 @@ void UIManager::run(SubmitFn on_submit, std::function<void()> on_quit) {
                 // Decode first UTF-8 codepoint
                 uint32_t cp = static_cast<unsigned char>(ch[0]);
                 if (cp >= 32) {
+                    tab_completer_.reset();
                     input_line_.insert(static_cast<char32_t>(cp));
                     return true;
                 }
             }
         }
-        // Tab completion handled by checking raw input
+        // Tab completion
         if (event.input() == "\t") {
-            // Tab event — pass to app via a flag mechanism; not handled here
+            auto completed = tab_completer_.complete(
+                input_line_.text(),
+                state_.online_users(),
+                state_.channel_list(),
+                known_commands());
+            input_line_.set_text(completed);
+            return true;
+        }
+        // Alt+1..9 — switch to channel by 0-based index
+        if (event.input().size() == 2 &&
+            event.input()[0] == '\x1b' &&
+            event.input()[1] >= '1' && event.input()[1] <= '9') {
+            if (on_channel_switch)
+                on_channel_switch(event.input()[1] - '1');
+            return true;
         }
         return false;
     });
