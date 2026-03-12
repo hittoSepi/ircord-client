@@ -6,6 +6,10 @@
     "boost-system",
     "openssl",
     "protobuf",
+    {
+      "name": "sqlite3",
+      "features": ["fts5"]
+    },
     "sqlitecpp",
     "libsodium",
     "libdatachannel",

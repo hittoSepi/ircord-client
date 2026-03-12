@@ -1,6 +1,7 @@
 #include "crypto/signal_store.hpp"
 #include <spdlog/spdlog.h>
 #include <cstring>
+#include <sodium.h>
 
 // libsignal-protocol-c helpers
 #include <signal_protocol_types.h>
@@ -11,6 +12,13 @@ SignalStore::SignalStore(db::LocalStore& store, const std::string& local_user_id
     : local_store_(store), local_user_id_(local_user_id) {}
 
 SignalStore::~SignalStore() = default;
+
+void SignalStore::set_identity_key(const std::array<uint8_t, 32>& pub_key,
+                                   const std::array<uint8_t, 64>& priv_key) {
+    identity_pub_ = pub_key;
+    identity_priv_ = priv_key;
+    identity_key_set_ = true;
+}
 
 void SignalStore::register_with_context(signal_protocol_store_context* ctx) {
     // ── Session store ─────────────────────────────────────────────────────
@@ -177,16 +185,49 @@ void SignalStore::spk_destroy(void*) {}
 int SignalStore::id_get_key_pair(signal_buffer** public_data,
                                   signal_buffer** private_data, void* ud) {
     // libsignal calls this to get our X3DH identity key pair.
-    // We store the Ed25519 identity pub in the DB; return it for identity use.
-    // For proper X3DH this should return a Curve25519 key, but for the purposes
-    // of this implementation we return whatever is stored.
+    // Signal Protocol uses X25519 (Curve25519) keys.
     auto* self = static_cast<SignalStore*>(ud);
-    auto row   = self->local_store_.load_identity(self->local_user_id_);
+    
+    // Use cached identity key if set (needed for group sessions)
+    if (self->identity_key_set_) {
+        // Convert Ed25519 keys to X25519 format for Signal Protocol
+        std::array<uint8_t, 32> x25519_pub;
+        std::array<uint8_t, 32> x25519_priv;
+        
+        // Convert public key: Ed25519 -> X25519
+        if (crypto_sign_ed25519_pk_to_curve25519(x25519_pub.data(), 
+                                                  self->identity_pub_.data()) != 0) {
+            return SG_ERR_UNKNOWN;
+        }
+        
+        // Convert private key: Ed25519 -> X25519
+        if (crypto_sign_ed25519_sk_to_curve25519(x25519_priv.data(),
+                                                  self->identity_priv_.data()) != 0) {
+            return SG_ERR_UNKNOWN;
+        }
+        
+        *public_data  = signal_buffer_create(x25519_pub.data(), x25519_pub.size());
+        *private_data = signal_buffer_create(x25519_priv.data(), x25519_priv.size());
+        return (*public_data && *private_data) ? SG_SUCCESS : SG_ERR_NOMEM;
+    }
+    
+    // Fallback: load from store (private key won't be available)
+    auto row = self->local_store_.load_identity(self->local_user_id_);
     if (!row) return SG_ERR_UNKNOWN;
 
-    *public_data  = signal_buffer_create(row->identity_pub.data(),
-                                          row->identity_pub.size());
-    // Private key not exposed through this path for security — return empty
+    // Try to convert the public key from Ed25519 to X25519
+    std::array<uint8_t, 32> x25519_pub;
+    if (row->identity_pub.size() == 32 &&
+        crypto_sign_ed25519_pk_to_curve25519(x25519_pub.data(),
+                                              row->identity_pub.data()) == 0) {
+        *public_data = signal_buffer_create(x25519_pub.data(), x25519_pub.size());
+    } else {
+        // Fallback: use as-is (may not work properly)
+        *public_data = signal_buffer_create(row->identity_pub.data(),
+                                             row->identity_pub.size());
+    }
+    
+    // Private key not available - group sessions will fail
     *private_data = signal_buffer_create(nullptr, 0);
     return *public_data ? SG_SUCCESS : SG_ERR_NOMEM;
 }
@@ -201,6 +242,8 @@ int SignalStore::id_save_identity(const signal_protocol_address* addr,
                                    uint8_t* key_data, size_t key_len, void* ud) {
     auto* self = static_cast<SignalStore*>(ud);
     std::string name(addr->name, addr->name_len);
+    // Signal Protocol provides X25519 keys, but we store Ed25519 format
+    // We store as-is for now; conversion happens in id_is_trusted
     self->local_store_.save_peer_identity(name,
         std::vector<uint8_t>(key_data, key_data + key_len));
     return SG_SUCCESS;
@@ -218,6 +261,17 @@ int SignalStore::id_is_trusted(const signal_protocol_address* addr,
         return 1;
     }
     // Verify the key matches what we stored
+    // Note: stored keys are Ed25519 format, but Signal Protocol sends X25519
+    // We need to handle both cases for backwards compatibility
+    if (stored->size() == 32 && key_len == 32) {
+        // Try to convert stored Ed25519 key to X25519 for comparison
+        std::array<uint8_t, 32> x25519_stored;
+        if (crypto_sign_ed25519_pk_to_curve25519(x25519_stored.data(),
+                                                  stored->data()) == 0) {
+            return (std::memcmp(x25519_stored.data(), key_data, 32) == 0) ? 1 : 0;
+        }
+        // Fallback: direct comparison
+    }
     if (stored->size() != key_len) return 0;
     return (std::memcmp(stored->data(), key_data, key_len) == 0) ? 1 : 0;
 }
@@ -243,9 +297,13 @@ int SignalStore::sk_load(signal_buffer** record, signal_buffer** /*user_record*/
     std::string group_id(name->group_id, name->group_id_len);
     std::string sender_id(name->sender.name, name->sender.name_len);
     auto data = self->local_store_.load_sender_key(group_id, sender_id, name->sender.device_id);
-    if (!data) return SG_SUCCESS;  // no record found = empty buffer
+    if (!data) {
+        // No record found - return 0 with NULL buffer (not found)
+        *record = nullptr;
+        return 0;
+    }
     *record = signal_buffer_create(data->data(), data->size());
-    return SG_SUCCESS;
+    return 1;  // 1 = found
 }
 
 void SignalStore::sk_destroy(void*) {}

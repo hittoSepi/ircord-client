@@ -1,6 +1,6 @@
 [server]
 host = "chat.rausku.com"
-port = 6667
+port = 6697
 
 [identity]
 user_id = ""

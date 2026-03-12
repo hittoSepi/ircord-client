@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <array>
 
 namespace ircord::crypto {
 
@@ -19,9 +20,19 @@ public:
     // Register all 5 store callbacks on an externally-owned store context.
     void register_with_context(signal_protocol_store_context* store_ctx);
 
+    // Set the identity key pair - must be called after identity is loaded.
+    // The private key is needed for group session operations.
+    void set_identity_key(const std::array<uint8_t, 32>& pub_key,
+                          const std::array<uint8_t, 64>& priv_key);
+
 private:
     db::LocalStore&  local_store_;
     std::string      local_user_id_;
+    
+    // Identity key pair - private key needed for group session signing
+    std::array<uint8_t, 32> identity_pub_{};
+    std::array<uint8_t, 64> identity_priv_{};
+    bool identity_key_set_ = false;
 
     signal_protocol_session_store        session_store_{};
     signal_protocol_pre_key_store        pre_key_store_{};

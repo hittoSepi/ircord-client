@@ -209,6 +209,10 @@ bool CryptoEngine::init(db::LocalStore& store, const ClientConfig& cfg,
     spk_        = identity_.generate_signed_prekey(1);
     next_opk_id_ = 1;
 
+    // Set identity key in signal store (needed for group sessions)
+    const auto& ed_keys = identity_.ed25519();
+    signal_store_->set_identity_key(ed_keys.pub, ed_keys.priv);
+
     // Group session
     group_session_ = std::make_unique<GroupSession>(store_ctx_, signal_ctx_);
     group_session_->set_local_identity(user_id);

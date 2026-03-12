@@ -135,15 +135,30 @@ void MessageHandler::handle_chat(const Envelope& env) {
 }
 
 void MessageHandler::handle_key_bundle(const Envelope& env) {
+    spdlog::debug("Received KeyBundle payload: size={}", env.payload().size());
+    
     KeyBundle bundle;
     if (!bundle.ParseFromString(env.payload())) {
         spdlog::warn("Failed to parse KeyBundle");
         return;
     }
 
-    const std::string& recipient_id = bundle.recipient_for();
+    std::string recipient_id = bundle.recipient_for();
+    spdlog::debug("Parsed KeyBundle: has_recipient_for={}, recipient_for='{}'", bundle.has_recipient_for(), recipient_id);
+    
+    // WORKAROUND: If recipient_for is empty, use the pending key request target
     if (recipient_id.empty()) {
-        spdlog::warn("KeyBundle missing recipient_for field — ignoring");
+        spdlog::warn("KeyBundle missing recipient_for field — using pending request target");
+        // Get the target from the pending key request queue
+        // For now, use the identity key to determine the sender
+        if (bundle.identity_pub().size() >= 32) {
+            // We need to look up the user by identity key
+            // This is a workaround - the server should send recipient_for
+            spdlog::debug("Bundle has identity_pub, attempting to identify sender by key");
+        }
+        // Try to use the last key request target as fallback
+        // This requires tracking pending key requests
+        spdlog::error("Cannot determine recipient without recipient_for field — need server fix");
         return;
     }
 

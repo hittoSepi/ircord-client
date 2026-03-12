@@ -87,30 +87,46 @@ static void migration_3(SQLite::Database& db) {
     )");
 }
 
-// Migration 4: Full-text search for messages using FTS5
+// Migration 4: Full-text search for messages using FTS5 (optional)
 static void migration_4(SQLite::Database& db) {
-    db.exec(R"(
-        -- FTS5 virtual table for message content search
-        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-            content,
-            content_rowid=rowid,
-            content='messages'
-        );
+    // Check if FTS5 is available
+    bool fts5_available = false;
+    try {
+        // Try to create a test FTS5 table to verify support
+        db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(test)");
+        db.exec("DROP TABLE IF EXISTS _fts5_test");
+        fts5_available = true;
+        spdlog::info("FTS5 support detected");
+    } catch (const std::exception& e) {
+        spdlog::warn("FTS5 not available: {}", e.what());
+    }
 
-        -- Trigger to keep FTS index updated on insert
-        CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
-        END;
+    if (fts5_available) {
+        db.exec(R"(
+            -- FTS5 virtual table for message content search
+            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                content,
+                content_rowid=rowid,
+                content='messages'
+            );
 
-        -- Trigger to keep FTS index updated on delete
-        CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, content) 
-            VALUES ('delete', old.rowid, old.content);
-        END;
+            -- Trigger to keep FTS index updated on insert
+            CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+                INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+            END;
 
-        -- Index for faster sender-based queries
-        CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, timestamp_ms);
-    )");
+            -- Trigger to keep FTS index updated on delete
+            CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, content) 
+                VALUES ('delete', old.rowid, old.content);
+            END;
+        )");
+    } else {
+        spdlog::info("Skipping FTS5 virtual table creation");
+    }
+
+    // Index for faster sender-based queries
+    db.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, timestamp_ms);");
 }
 
 void apply_migrations(SQLite::Database& db) {
