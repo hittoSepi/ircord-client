@@ -6,10 +6,10 @@ namespace ircord {
 static const std::vector<std::string> kKnownCommands = {
     "/join", "/part", "/msg", "/me",
     "/call", "/hangup", "/accept",
-    "/voice", "/mute", "/deafen",
+    "/voice", "/mute", "/deafen", "/ptt",
     "/trust", "/safety",
-    "/set", "/clear",
-    "/quit", "/help",
+    "/set", "/clear", "/search",
+    "/quit", "/help", "/settings",
     "/names", "/whois",
     "/upload", "/download",
 };

@@ -1,25 +1,50 @@
+# IRCord Client Configuration
+# Copy this file to your config directory:
+#   Windows: %APPDATA%\ircord\config.toml
+#   Linux:   ~/.config/ircord/config.toml
+
 [server]
 host = "chat.rausku.com"
 port = 6697
+cert_pin = ""  # SHA-256 fingerprint for certificate pinning (optional)
 
 [identity]
-user_id = ""
+user_id = "your_username"
+key_file = ""  # Path to identity key file (empty = default)
 
 [ui]
-theme = "tokyo-night"
+theme = "tokyo-night"  # Available: tokyo-night, dark, light, dracula, nord, solarized-dark, solarized-light
 timestamp_format = "%H:%M"
 max_messages = 1000
+font_scale = 100
+show_timestamps = true
+show_user_colors = true
 
 [voice]
-input_device  = ""
+input_device = ""
 output_device = ""
-opus_bitrate  = 64000
-frame_ms      = 20
+opus_bitrate = 64000
+frame_ms = 20
+mode = "ptt"  # "ptt" (push-to-talk) or "vox" (voice-activated)
+ptt_key = "F1"
+vad_threshold = 0.02
 
 [preview]
-enabled       = true
+enabled = true
 fetch_timeout = 5
-max_cache     = 200
+max_cache = 200
 
 [tls]
 verify_peer = true
+
+[connection]
+auto_reconnect = true
+reconnect_delay_sec = 5
+timeout_sec = 30
+
+[notifications]
+desktop_notifications = true
+sound_alerts = true
+notify_on_mention = true
+notify_on_dm = true
+mention_keywords = "your_username"

@@ -144,7 +144,7 @@ void MessageHandler::handle_key_bundle(const Envelope& env) {
     }
 
     std::string recipient_id = bundle.recipient_for();
-    spdlog::debug("Parsed KeyBundle: has_recipient_for={}, recipient_for='{}'", bundle.has_recipient_for(), recipient_id);
+    spdlog::debug("Parsed KeyBundle: recipient_for='{}'", recipient_id);
     
     // WORKAROUND: If recipient_for is empty, use the pending key request target
     if (recipient_id.empty()) {
@@ -352,6 +352,19 @@ void MessageHandler::send_hello() {
     hello.set_protocol_version(1);
     hello.set_client_version("ircord-client/0.1.0");
     send_envelope(MT_HELLO, hello);
+}
+
+void MessageHandler::send_command(const std::string& cmd, const std::vector<std::string>& args) {
+    if (!net_client_) return;
+    
+    IrcCommand ic;
+    ic.set_command(cmd);
+    for (const auto& arg : args) {
+        ic.add_args(arg);
+    }
+    
+    send_envelope(MT_COMMAND, ic);
+    spdlog::debug("Sent command: {} with {} args", cmd, args.size());
 }
 
 } // namespace ircord::net

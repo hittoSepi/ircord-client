@@ -138,6 +138,129 @@ std::vector<std::string> AppState::online_users() const {
     return result;
 }
 
+// ── Channel User List ─────────────────────────────────────────────────────────
+
+void AppState::set_channel_users(const std::string& channel_id,
+                                  const std::vector<ChannelUserInfo>& users) {
+    std::unique_lock lk(mu_);
+    auto& ch_users = channel_users_[channel_id];
+    ch_users.clear();
+    for (const auto& u : users) {
+        ChannelUserInfo info = u;
+        // Sync with current presence and voice status
+        auto pres_it = online_users_.find(u.user_id);
+        if (pres_it != online_users_.end()) {
+            info.presence = pres_it->second;
+        }
+        auto voice_it = user_voice_status_.find(u.user_id);
+        if (voice_it != user_voice_status_.end()) {
+            info.voice_status = voice_it->second;
+        }
+        ch_users[u.user_id] = std::move(info);
+    }
+}
+
+void AppState::add_channel_user(const std::string& channel_id, const ChannelUserInfo& user) {
+    std::unique_lock lk(mu_);
+    ChannelUserInfo info = user;
+    // Sync with current presence
+    auto pres_it = online_users_.find(user.user_id);
+    if (pres_it != online_users_.end()) {
+        info.presence = pres_it->second;
+    }
+    // Sync with voice status
+    auto voice_it = user_voice_status_.find(user.user_id);
+    if (voice_it != user_voice_status_.end()) {
+        info.voice_status = voice_it->second;
+    }
+    channel_users_[channel_id][user.user_id] = std::move(info);
+}
+
+void AppState::remove_channel_user(const std::string& channel_id, const std::string& user_id) {
+    std::unique_lock lk(mu_);
+    auto ch_it = channel_users_.find(channel_id);
+    if (ch_it != channel_users_.end()) {
+        ch_it->second.erase(user_id);
+    }
+}
+
+void AppState::set_user_role(const std::string& channel_id, const std::string& user_id, UserRole role) {
+    std::unique_lock lk(mu_);
+    auto ch_it = channel_users_.find(channel_id);
+    if (ch_it != channel_users_.end()) {
+        auto user_it = ch_it->second.find(user_id);
+        if (user_it != ch_it->second.end()) {
+            user_it->second.role = role;
+        }
+    }
+}
+
+std::vector<ChannelUserInfo> AppState::channel_users(const std::string& channel_id) const {
+    std::shared_lock lk(mu_);
+    std::vector<ChannelUserInfo> result;
+    auto ch_it = channel_users_.find(channel_id);
+    if (ch_it != channel_users_.end()) {
+        for (const auto& [_, info] : ch_it->second) {
+            result.push_back(info);
+        }
+    }
+    // Sort: admins first, then voice, then regular; alphabetically within each group
+    std::sort(result.begin(), result.end(), [](const ChannelUserInfo& a, const ChannelUserInfo& b) {
+        if (a.role != b.role) return static_cast<int>(a.role) > static_cast<int>(b.role);
+        return a.user_id < b.user_id;
+    });
+    return result;
+}
+
+std::optional<ChannelUserInfo> AppState::channel_user(const std::string& channel_id,
+                                                const std::string& user_id) const {
+    std::shared_lock lk(mu_);
+    auto ch_it = channel_users_.find(channel_id);
+    if (ch_it != channel_users_.end()) {
+        auto user_it = ch_it->second.find(user_id);
+        if (user_it != ch_it->second.end()) {
+            return user_it->second;
+        }
+    }
+    return std::nullopt;
+}
+
+void AppState::ensure_channel_users_from_online(const std::string& channel_id) {
+    std::unique_lock lk(mu_);
+    // If channel already has users, don't overwrite
+    if (channel_users_.count(channel_id)) return;
+    
+    // Create users from online_users_ with Regular role
+    auto& ch_users = channel_users_[channel_id];
+    for (const auto& [uid, status] : online_users_) {
+        if (status != PresenceStatus::Offline) {
+            ChannelUserInfo info;
+            info.user_id = uid;
+            info.role = UserRole::Regular;
+            info.presence = status;
+            ch_users[uid] = std::move(info);
+        }
+    }
+}
+
+void AppState::set_user_voice_status(const std::string& user_id, ChannelUserInfo::VoiceStatus status) {
+    std::unique_lock lk(mu_);
+    user_voice_status_[user_id] = status;
+    // Update in all channel user lists
+    for (auto& [ch_id, users] : channel_users_) {
+        auto it = users.find(user_id);
+        if (it != users.end()) {
+            it->second.voice_status = status;
+        }
+    }
+}
+
+ChannelUserInfo::VoiceStatus AppState::user_voice_status(const std::string& user_id) const {
+    std::shared_lock lk(mu_);
+    auto it = user_voice_status_.find(user_id);
+    return it != user_voice_status_.end() ? it->second : ChannelUserInfo::VoiceStatus::Off;
+}
+
 // ── Voice ─────────────────────────────────────────────────────────────────────
 
 VoiceState AppState::voice_snapshot() const {

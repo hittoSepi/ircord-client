@@ -41,7 +41,20 @@ private:
     void switch_to_channel_by_index(int index);
     void persist_message(const std::string& channel_id, const Message& msg);
 
+    // Open settings screen
+    void open_settings();
+    
+    // Get public key hex for display in settings
+    std::string get_public_key_hex() const;
+    
+    // Apply theme change immediately
+    void on_theme_changed(const std::string& theme_name);
+    
+    // Save config to file
+    void save_current_config();
+
     ClientConfig cfg_;
+    std::filesystem::path config_path_;
 
     std::unique_ptr<db::LocalStore>         store_;
     AppState                                state_;
@@ -55,6 +68,9 @@ private:
     std::unique_ptr<net::MessageHandler>    msg_handler_;
 
     std::thread io_thread_;
+    
+    // Flag to indicate if app should exit (for settings logout)
+    bool should_exit_ = false;
 };
 
 } // namespace ircord

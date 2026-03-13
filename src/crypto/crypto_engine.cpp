@@ -291,6 +291,7 @@ ChatEnvelope CryptoEngine::encrypt(const std::string& sender_id,
                 env.set_ciphertext(ct.data(), ct.size());
                 env.set_ciphertext_type(4);
                 env.set_skdm(skdm.data(), skdm.size());
+                spdlog::debug("Group encrypt: created session for {}, SKDM size: {} bytes", recipient_id, skdm.size());
                 return env;
             } catch (const std::exception& e) {
                 spdlog::error("Group encrypt failed for {}: {}", recipient_id, e.what());

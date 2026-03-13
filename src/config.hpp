@@ -20,6 +20,12 @@ struct UiConfig {
     std::string theme             = "tokyo-night";
     std::string timestamp_format  = "%H:%M";
     int         max_messages      = 1000;
+    int         font_scale        = 100;     // Percentage (100 = 100%)
+    bool        show_timestamps   = true;
+    bool        show_user_colors  = true;
+    // User list panel settings (persisted)
+    int         user_list_width   = 20;      // Width in columns
+    bool        user_list_collapsed = false; // Start collapsed?
 };
 
 struct VoiceConfig {
@@ -42,13 +48,29 @@ struct TlsConfig {
     bool verify_peer = true;
 };
 
+struct ConnectionConfig {
+    bool auto_reconnect      = true;
+    int  reconnect_delay_sec = 5;
+    int  timeout_sec         = 30;
+};
+
+struct NotificationConfig {
+    bool        desktop_notifications = true;
+    bool        sound_alerts          = true;
+    bool        notify_on_mention     = true;
+    bool        notify_on_dm          = true;
+    std::string mention_keywords;          // Comma-separated list
+};
+
 struct ClientConfig {
-    ServerConfig   server;
-    IdentityConfig identity;
-    UiConfig       ui;
-    VoiceConfig    voice;
-    PreviewConfig  preview;
-    TlsConfig      tls;
+    ServerConfig       server;
+    IdentityConfig     identity;
+    UiConfig           ui;
+    VoiceConfig        voice;
+    PreviewConfig      preview;
+    TlsConfig          tls;
+    ConnectionConfig   connection;
+    NotificationConfig notifications;
 
     // Derived: platform-specific config directory
     std::filesystem::path config_dir;
@@ -65,5 +87,11 @@ void save_config(const ClientConfig& cfg, const std::filesystem::path& path);
 //   Windows: %APPDATA%\ircord\
 //   Linux:   ~/.config/ircord/
 std::filesystem::path default_config_dir();
+
+// Export settings to a backup file
+void export_settings(const ClientConfig& cfg, const std::filesystem::path& path);
+
+// Import settings from a backup file (returns true on success)
+bool import_settings(ClientConfig& cfg, const std::filesystem::path& path);
 
 } // namespace ircord

@@ -48,6 +48,9 @@ public:
     // Send KEY_REQUEST for a DM recipient and track the pending plaintext
     // so it can be sent once the KEY_BUNDLE arrives.
     void request_key(const std::string& recipient_id, const std::string& plaintext);
+    
+    // Send IRC command to server
+    void send_command(const std::string& cmd, const std::vector<std::string>& args);
 
 private:
     void handle_auth_challenge(const Envelope& env);

@@ -446,6 +446,14 @@ void VoiceEngine::refresh_speaking_state() {
         vs.speaking_peers = std::move(speaking);
         state_.set_voice_state(vs);
     }
+    
+    // Update individual user voice status for the user list panel
+    // Mark all participants as connected (off) first
+    for (const auto& peer_id : vs.participants) {
+        bool is_speaking = std::find(speaking.begin(), speaking.end(), peer_id) != speaking.end();
+        auto status = is_speaking ? ChannelUserInfo::VoiceStatus::Talking : ChannelUserInfo::VoiceStatus::Off;
+        state_.set_user_voice_status(peer_id, status);
+    }
 }
 
 } // namespace ircord::voice

@@ -1,5 +1,7 @@
 #include "app.hpp"
 #include "input/command_parser.hpp"
+#include "ui/login_screen.hpp"
+#include "ui/settings_screen.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -24,6 +26,8 @@ App::~App() {
 
 bool App::init(const std::filesystem::path& config_path,
                const std::string& user_id_override) {
+    config_path_ = config_path;
+    
     // ── Logging ───────────────────────────────────────────────────────────
     // File sink for debug output (TUI hides stderr)
     auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
@@ -43,14 +47,26 @@ bool App::init(const std::filesystem::path& config_path,
     cfg_ = load_config(config_path);
     if (!user_id_override.empty()) cfg_.identity.user_id = user_id_override;
 
-    // Prompt for username if none was set (default "user" or empty)
-    if (cfg_.identity.user_id.empty() || cfg_.identity.user_id == "user") {
-        std::string entered;
-        while (entered.empty()) {
-            std::cout << "Enter username: ";
-            std::getline(std::cin, entered);
+    // ── Login Screen (FTXUI) ──────────────────────────────────────────────
+    // Show the graphical login screen to get credentials
+    ui::LoginCredentials login_creds;
+    {
+        ui::LoginScreen login_screen;
+        ftxui::ScreenInteractive screen = ftxui::ScreenInteractive::Fullscreen();
+        
+        auto result = login_screen.show(cfg_, screen, login_creds);
+        
+        if (result == ui::LoginResult::Cancelled) {
+            spdlog::info("Login cancelled by user");
+            return false;
         }
-        cfg_.identity.user_id = entered;
+        
+        // Update config with login credentials
+        cfg_.server.host = login_creds.host;
+        cfg_.server.port = login_creds.port;
+        cfg_.identity.user_id = login_creds.username;
+        
+        // Save config with new values
         save_config(cfg_, config_path);
     }
 
@@ -64,19 +80,14 @@ bool App::init(const std::filesystem::path& config_path,
         return false;
     }
 
-    // ── Crypto (passphrase before TUI starts) ────────────────────────────
+    // ── Crypto (use passkey from login screen) ───────────────────────────
     crypto_ = std::make_unique<crypto::CryptoEngine>();
 
-    std::string passphrase;
-    if (!store_->has_identity(cfg_.identity.user_id)) {
-        std::cout << "New identity for '" << cfg_.identity.user_id
-                  << "'. Enter passphrase: ";
-    } else {
-        std::cout << "Passphrase for '" << cfg_.identity.user_id << "': ";
-    }
-    std::getline(std::cin, passphrase);
+    // Use the passkey entered in the login screen
+    const std::string& passphrase = login_creds.passkey;
 
     if (!crypto_->init(*store_, cfg_, passphrase)) {
+        // Show error and fail - the user will need to restart
         std::cerr << "Crypto init failed (wrong passphrase?)\n";
         return false;
     }
@@ -176,7 +187,8 @@ int App::run() {
         [this](const std::string& line) { on_submit(line); },
         [this]()                         { ioc_.stop(); },
         [this](int idx)                  { switch_to_channel_by_index(idx); },
-        [this]()                         { voice_->toggle_voice_mode(); }
+        [this]()                         { voice_->toggle_voice_mode(); },
+        [this]()                         { open_settings(); }
     );
 
     // ── Shutdown ─────────────────────────────────────────────────────────
@@ -185,7 +197,7 @@ int App::run() {
     if (io_thread_.joinable()) io_thread_.join();
     if (previewer_) previewer_->stop();
 
-    return 0;
+    return should_exit_ ? 1 : 0;
 }
 
 void App::on_submit(const std::string& line) {
@@ -207,6 +219,10 @@ void App::handle_command(const ParsedCommand& cmd) {
         // UIManager will exit when on_quit callback fires; here we trigger it
         // via a system message and let the user press Esc/Ctrl-C
         ui_->push_system_msg("Goodbye.");
+        return;
+    }
+    if (cmd.name == "/settings") {
+        open_settings();
         return;
     }
     if (cmd.name == "/part") {
@@ -271,6 +287,30 @@ void App::handle_command(const ParsedCommand& cmd) {
         ui_->push_system_msg("  " + sn);
         auto existing = store_->load_peer_identity(peer);
         if (existing) store_->save_peer_identity(peer, *existing, "verified");
+    } else if (cmd.name == "/me" && !cmd.args.empty()) {
+        // Action message (/me eats pizza)
+        std::vector<std::string> action_args;
+        std::string action;
+        for (size_t i = 0; i < cmd.args.size(); ++i) {
+            if (i > 0) action += ' ';
+            action += cmd.args[i];
+        }
+        action_args.push_back(action);
+        auto ch = state_.active_channel().value_or("#general");
+        // Send action as IRC command
+        if (msg_handler_) {
+            msg_handler_->send_command("me", action_args);
+        }
+        // Show locally too
+        const std::string& local_id = cfg_.identity.user_id;
+        Message action_msg;
+        action_msg.sender_id    = local_id;
+        action_msg.content      = "* " + local_id + " " + action;
+        action_msg.type         = Message::Type::System;
+        action_msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        state_.push_message(ch, std::move(action_msg));
+        ui_->notify();
     } else if (cmd.name == "/names") {
         auto users = state_.online_users();
         std::string list;
@@ -305,8 +345,10 @@ void App::handle_command(const ParsedCommand& cmd) {
         ui_->push_system_msg("(cleared)");
     } else if (cmd.name == "/help") {
         ui_->push_system_msg(
-            "Commands: /join /part /msg /call /accept /hangup /voice "
-            "/mute /deafen /ptt /trust /names /search /clear /quit");
+            "Commands: /join /part /msg /me /call /accept /hangup /voice "
+            "/mute /deafen /ptt /trust /names /search /clear /settings /quit");
+        ui_->push_system_msg(
+            "Shortcuts: F1=PTT toggle, F12=Settings, Alt+1-9=Switch channel, Esc=Quit");
     } else {
         ui_->push_system_msg("Unknown command: " + cmd.name);
     }
@@ -422,6 +464,55 @@ void App::switch_to_channel(const std::string& channel_id) {
     state_.ensure_channel(channel_id);
     state_.set_active_channel(channel_id);
     ui_->push_system_msg("Switched to " + channel_id);
+}
+
+void App::open_settings() {
+    // Get public key for display
+    std::string pubkey_hex = get_public_key_hex();
+    
+    // Create a new screen for settings (modal)
+    ftxui::ScreenInteractive screen = ftxui::ScreenInteractive::Fullscreen();
+    
+    ui::SettingsScreen settings_screen;
+    auto result = settings_screen.show(cfg_, screen, pubkey_hex,
+        [this](const std::string& theme) { on_theme_changed(theme); });
+    
+    switch (result) {
+        case ui::SettingsResult::Saved:
+            save_current_config();
+            ui_->push_system_msg("Settings saved.");
+            break;
+        case ui::SettingsResult::Cancelled:
+            ui_->push_system_msg("Settings cancelled.");
+            break;
+        case ui::SettingsResult::Logout:
+            ui_->push_system_msg("Logging out...");
+            should_exit_ = true;
+            // Trigger exit
+            ioc_.stop();
+            break;
+    }
+    ui_->notify();
+}
+
+std::string App::get_public_key_hex() const {
+    if (!crypto_ || !store_) return "";
+    
+    // Get the identity public key from crypto engine
+    // This is a simplified version - in production, get from crypto_->identity()
+    // For now return empty string - would need proper integration with crypto engine
+    return "(public key display not yet implemented)";
+}
+
+void App::on_theme_changed(const std::string& theme_name) {
+    cfg_.ui.theme = theme_name;
+    ui::apply_theme(theme_name);
+    // Note: In a full implementation, this would update the color scheme
+    // and refresh the UI immediately
+}
+
+void App::save_current_config() {
+    save_config(cfg_, config_path_);
 }
 
 } // namespace ircord
