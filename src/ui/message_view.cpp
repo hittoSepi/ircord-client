@@ -1,5 +1,6 @@
 #include "ui/message_view.hpp"
 #include "ui/color_scheme.hpp"
+#include "ui/markdown_renderer.hpp"
 #include <ftxui/dom/elements.hpp>
 #include <algorithm>
 #include <chrono>
@@ -31,14 +32,14 @@ static Element render_one(const Message& msg, const std::string& ts_fmt) {
     if (msg.type == Message::Type::System || msg.type == Message::Type::VoiceEvent) {
         return hbox({
             ts_el,
-            paragraph("* " + msg.content) | color(palette::yellow()) | flex,
+            render_markdown("* " + msg.content) | color(palette::yellow()) | flex,
         });
     }
 
     return hbox({
         ts_el,
         text("<" + msg.sender_id + "> ") | ftxui::color(nick_color(msg.sender_id)),
-        paragraph(msg.content) | color(palette::fg()) | flex,
+        render_markdown(msg.content) | flex,
     });
 }
 
