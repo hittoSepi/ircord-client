@@ -81,6 +81,13 @@ input_device  = ""             # Microphone (empty = system default)
 output_device = ""             # Speaker (empty = system default)
 opus_bitrate  = 64000          # Voice quality in bits/s
 frame_ms      = 20             # Audio frame size in milliseconds
+ice_servers   = [              # Empty = built-in Google STUN fallback
+  "stun:turn.example.com:3478",
+  "turn:turn.example.com:3478?transport=udp",
+  "turns:turn.example.com:5349?transport=tcp",
+]
+turn_username = "ircord"       # Optional TURN credential
+turn_password = "secret"       # Optional TURN credential
 
 [preview]
 enabled       = true           # Enable link previews
@@ -145,6 +152,25 @@ Options:
 - **Certificate pinning** — automatic trust-on-first-use for server certificates
 
 ## Building from Source
+
+## Voice / ICE Setup
+
+If `[voice].ice_servers` is empty, the client falls back to public Google STUN servers. That is acceptable for quick testing, but it is not reliable enough for real-world NAT traversal.
+
+For a server you run yourself, configure one STUN entry and at least one TURN entry:
+
+```toml
+[voice]
+ice_servers = [
+  "stun:turn.example.com:3478",
+  "turn:turn.example.com:3478?transport=udp",
+  "turns:turn.example.com:5349?transport=tcp",
+]
+turn_username = "ircord"
+turn_password = "replace-with-your-turn-password"
+```
+
+When `ice_servers` is defined, the client uses only that list and does not append the built-in Google STUN fallback. If `turn_username` is set, the same TURN credentials are applied to all configured ICE servers.
 
 ### Prerequisites
 

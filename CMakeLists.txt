@@ -267,6 +267,20 @@ target_include_directories(test-input-line PRIVATE
 target_link_libraries(test-input-line PRIVATE Catch2::Catch2WithMain)
 add_test(NAME input-line-tests COMMAND test-input-line)
 
+add_executable(test-config
+    tests/test_config.cpp
+    src/config.cpp
+)
+target_include_directories(test-config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(test-config PRIVATE
+    Catch2::Catch2WithMain
+    toml11::toml11
+    spdlog::spdlog
+)
+add_test(NAME config-tests COMMAND test-config)
+
 set(RELEASE_ARCHIVE_NAME "${PROJECT_NAME}-latest.zip" CACHE STRING "Release archive file name")
 set(RELEASE_ARCHIVE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/release" CACHE PATH "Directory where the release zip is generated")
 add_release_zip_target(ircord-client

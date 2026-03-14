@@ -28,6 +28,14 @@ frame_ms = 20
 mode = "ptt"  # "ptt" (push-to-talk) or "vox" (voice-activated)
 ptt_key = "F1"
 vad_threshold = 0.02
+# Empty list = built-in public Google STUN fallback.
+ice_servers = [
+  "stun:turn.example.com:3478",
+  "turn:turn.example.com:3478?transport=udp",
+  "turns:turn.example.com:5349?transport=tcp",
+]
+turn_username = "ircord"
+turn_password = "replace-with-your-turn-password"
 
 [preview]
 enabled = true

@@ -88,6 +88,9 @@ ClientConfig load_config(const std::filesystem::path& path) {
             if (v.contains("mode"))          cfg.voice.mode          = toml::find<std::string>(v, "mode");
             if (v.contains("ptt_key"))       cfg.voice.ptt_key       = toml::find<std::string>(v, "ptt_key");
             if (v.contains("vad_threshold")) cfg.voice.vad_threshold = static_cast<float>(toml::find<double>(v, "vad_threshold"));
+            if (v.contains("ice_servers"))   cfg.voice.ice_servers   = toml::find<std::vector<std::string>>(v, "ice_servers");
+            if (v.contains("turn_username")) cfg.voice.turn_username = toml::find<std::string>(v, "turn_username");
+            if (v.contains("turn_password")) cfg.voice.turn_password = toml::find<std::string>(v, "turn_password");
         }
 
         if (data.contains("preview")) {
@@ -234,6 +237,13 @@ void save_config(const ClientConfig& cfg, const std::filesystem::path& path) {
     data["voice"]["mode"] = cfg.voice.mode;
     data["voice"]["ptt_key"] = cfg.voice.ptt_key;
     data["voice"]["vad_threshold"] = cfg.voice.vad_threshold;
+    toml::array voice_ice_servers;
+    for (const auto& server : cfg.voice.ice_servers) {
+        voice_ice_servers.push_back(server);
+    }
+    data["voice"]["ice_servers"] = voice_ice_servers;
+    data["voice"]["turn_username"] = cfg.voice.turn_username;
+    data["voice"]["turn_password"] = cfg.voice.turn_password;
 
     // Patch preview section
     data["preview"]["enabled"] = cfg.preview.enabled;
@@ -289,6 +299,13 @@ void export_settings(const ClientConfig& cfg, const std::filesystem::path& path)
         data["voice"]["mode"] = cfg.voice.mode;
         data["voice"]["ptt_key"] = cfg.voice.ptt_key;
         data["voice"]["vad_threshold"] = cfg.voice.vad_threshold;
+        toml::array voice_ice_servers;
+        for (const auto& server : cfg.voice.ice_servers) {
+            voice_ice_servers.push_back(server);
+        }
+        data["voice"]["ice_servers"] = voice_ice_servers;
+        data["voice"]["turn_username"] = cfg.voice.turn_username;
+        data["voice"]["turn_password"] = cfg.voice.turn_password;
         
         data["preview"]["enabled"] = cfg.preview.enabled;
         data["preview"]["fetch_timeout"] = cfg.preview.fetch_timeout;
@@ -350,6 +367,9 @@ bool import_settings(ClientConfig& cfg, const std::filesystem::path& path) {
             if (v.contains("mode")) cfg.voice.mode = toml::find<std::string>(v, "mode");
             if (v.contains("ptt_key")) cfg.voice.ptt_key = toml::find<std::string>(v, "ptt_key");
             if (v.contains("vad_threshold")) cfg.voice.vad_threshold = static_cast<float>(toml::find<double>(v, "vad_threshold"));
+            if (v.contains("ice_servers")) cfg.voice.ice_servers = toml::find<std::vector<std::string>>(v, "ice_servers");
+            if (v.contains("turn_username")) cfg.voice.turn_username = toml::find<std::string>(v, "turn_username");
+            if (v.contains("turn_password")) cfg.voice.turn_password = toml::find<std::string>(v, "turn_password");
         }
         
         // Import preview settings
