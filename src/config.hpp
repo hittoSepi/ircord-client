@@ -88,6 +88,14 @@ void save_config(const ClientConfig& cfg, const std::filesystem::path& path);
 //   Linux:   ~/.config/ircord/
 std::filesystem::path default_config_dir();
 
+// Returns the default path for remembered login credentials.
+std::filesystem::path default_credentials_path();
+
+// Clears remembered credentials and local encrypted client state.
+bool clear_local_client_state(ClientConfig& cfg,
+                              const std::filesystem::path& config_path,
+                              std::string* status_message = nullptr);
+
 // Export settings to a backup file
 void export_settings(const ClientConfig& cfg, const std::filesystem::path& path);
 

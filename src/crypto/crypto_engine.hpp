@@ -11,6 +11,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ircord::crypto {
@@ -90,6 +92,9 @@ private:
 
     // Pending: recipients we're waiting for key bundles for
     std::unordered_map<std::string, std::string> pending_plaintexts_;
+
+    // Channels where we've sent SKDM this session (resets on reconnect)
+    std::unordered_set<std::string> sent_skdm_channels_;
 
     db::LocalStore* local_store_ = nullptr;
 

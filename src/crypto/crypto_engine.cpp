@@ -277,26 +277,35 @@ ChatEnvelope CryptoEngine::encrypt(const std::string& sender_id,
 
     // ── Group channel (#channel): use Sender Key, no key bundle request ───
     if (!recipient_id.empty() && recipient_id[0] == '#') {
-        try {
-            auto ct = group_session_->encrypt(recipient_id, plaintext_bytes);
-            env.set_ciphertext(ct.data(), ct.size());
-            env.set_ciphertext_type(4);  // SENDER_KEY_MESSAGE
-            return env;
-        } catch (...) {
-            // No sender key chain yet — create one and include SKDM so receivers
-            // can initialize their decryption state from this first message.
+        bool need_skdm = (sent_skdm_channels_.find(recipient_id) == sent_skdm_channels_.end());
+
+        if (need_skdm) {
+            // First message to this channel this session — create fresh group
+            // session and include SKDM so all receivers can decrypt.
             try {
                 auto skdm = group_session_->create_session(recipient_id);
                 auto ct   = group_session_->encrypt(recipient_id, plaintext_bytes);
                 env.set_ciphertext(ct.data(), ct.size());
                 env.set_ciphertext_type(4);
                 env.set_skdm(skdm.data(), skdm.size());
-                spdlog::debug("Group encrypt: created session for {}, SKDM size: {} bytes", recipient_id, skdm.size());
+                sent_skdm_channels_.insert(recipient_id);
+                spdlog::debug("Group encrypt: created session for {}, SKDM size: {} bytes",
+                              recipient_id, skdm.size());
                 return env;
             } catch (const std::exception& e) {
                 spdlog::error("Group encrypt failed for {}: {}", recipient_id, e.what());
                 return {};
             }
+        }
+
+        try {
+            auto ct = group_session_->encrypt(recipient_id, plaintext_bytes);
+            env.set_ciphertext(ct.data(), ct.size());
+            env.set_ciphertext_type(4);  // SENDER_KEY_MESSAGE
+            return env;
+        } catch (const std::exception& e) {
+            spdlog::error("Group encrypt failed for {}: {}", recipient_id, e.what());
+            return {};
         }
     }
 

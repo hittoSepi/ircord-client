@@ -3,6 +3,8 @@
 #include <spdlog/spdlog.h>
 #include <cstdlib>
 #include <fstream>
+#include <algorithm>
+#include <vector>
 
 namespace ircord {
 
@@ -20,6 +22,21 @@ std::filesystem::path default_config_dir() {
     }
     return std::filesystem::path(".");
 #endif
+}
+
+std::filesystem::path default_credentials_path() {
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata) {
+        return std::filesystem::path(appdata) / "ircord" / "credentials.enc";
+    }
+#else
+    const char* home = std::getenv("HOME");
+    if (home) {
+        return std::filesystem::path(home) / ".config" / "ircord" / "credentials.enc";
+    }
+#endif
+    return std::filesystem::path("credentials.enc");
 }
 
 ClientConfig load_config(const std::filesystem::path& path) {
@@ -106,6 +123,73 @@ ClientConfig load_config(const std::filesystem::path& path) {
     }
 
     return cfg;
+}
+
+bool clear_local_client_state(ClientConfig& cfg,
+                              const std::filesystem::path& config_path,
+                              std::string* status_message) {
+    std::vector<std::filesystem::path> targets;
+    auto add_target = [&targets](const std::filesystem::path& path) {
+        if (path.empty()) {
+            return;
+        }
+        if (std::find(targets.begin(), targets.end(), path) == targets.end()) {
+            targets.push_back(path);
+        }
+    };
+
+    add_target(default_credentials_path());
+    add_target(cfg.db_path);
+    if (!cfg.identity.key_file.empty()) {
+        add_target(cfg.identity.key_file);
+    }
+    add_target(cfg.config_dir / "identity.key");
+
+    size_t removed_count = 0;
+    std::string failed_path;
+    std::string failed_reason;
+
+    for (const auto& target : targets) {
+        try {
+            if (!std::filesystem::exists(target)) {
+                continue;
+            }
+
+            if (std::filesystem::is_directory(target)) {
+                removed_count += std::filesystem::remove_all(target);
+            } else if (std::filesystem::remove(target)) {
+                ++removed_count;
+            }
+        } catch (const std::exception& e) {
+            failed_path = target.string();
+            failed_reason = e.what();
+            break;
+        }
+    }
+
+    if (!failed_reason.empty()) {
+        if (status_message) {
+            *status_message = "Failed to clear local data at " + failed_path + ": " + failed_reason;
+        }
+        spdlog::error("Failed to clear local client state at '{}': {}", failed_path, failed_reason);
+        return false;
+    }
+
+    cfg.identity.user_id = "user";
+    cfg.identity.key_file.clear();
+    cfg.server.cert_pin.clear();
+    save_config(cfg, config_path);
+
+    if (status_message) {
+        if (removed_count > 0) {
+            *status_message = "Local credentials and identity data cleared. Enter username and passkey again.";
+        } else {
+            *status_message = "No local credential files were found. Enter username and passkey again.";
+        }
+    }
+
+    spdlog::info("Cleared local client state ({} entries removed)", removed_count);
+    return true;
 }
 
 void save_config(const ClientConfig& cfg, const std::filesystem::path& path) {

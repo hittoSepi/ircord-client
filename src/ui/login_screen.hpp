@@ -21,8 +21,9 @@ struct LoginCredentials {
 
 // Result of the login attempt
 enum class LoginResult {
-    Success,    // User submitted valid credentials
-    Cancelled,  // User quit/escaped
+    Success,         // User submitted valid credentials
+    Cancelled,       // User quit/escaped
+    ClearLocalData,  // User requested local credential reset
 };
 
 // LoginScreen handles the centered login form UI.
@@ -36,7 +37,9 @@ public:
     LoginResult show(const ClientConfig& existing_cfg,
                      ftxui::ScreenInteractive& screen,
                      LoginCredentials& out_creds,
-                     const std::optional<LoginCredentials>& prefill = std::nullopt);
+                     const std::optional<LoginCredentials>& prefill = std::nullopt,
+                     const std::string& initial_status = {},
+                     bool initial_status_is_error = true);
 
     // Set an error message to display (call from connection callback)
     void set_error(const std::string& error);
@@ -55,10 +58,12 @@ private:
     bool        remember_ = false;
 
     // UI state
-    std::string error_message_;
+    std::string status_message_;
+    bool        status_is_error_ = true;
     bool        is_loading_ = false;
     bool        submitted_ = false;
     bool        cancelled_ = false;
+    bool        clear_local_data_ = false;
 
     // Components
     ftxui::Component host_input_;
@@ -67,6 +72,7 @@ private:
     ftxui::Component passkey_input_;
     ftxui::Component remember_checkbox_;
     ftxui::Component connect_button_;
+    ftxui::Component clear_button_;
     ftxui::Component quit_button_;
     ftxui::Component container_;
 };

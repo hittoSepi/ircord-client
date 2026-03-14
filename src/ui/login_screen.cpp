@@ -18,22 +18,6 @@ namespace ircord::ui {
 
 namespace {
 
-// File paths for secure credential storage
-std::filesystem::path get_creds_path() {
-#ifdef _WIN32
-    const char* appdata = std::getenv("APPDATA");
-    if (appdata) {
-        return std::filesystem::path(appdata) / "ircord" / "credentials.enc";
-    }
-#else
-    const char* home = std::getenv("HOME");
-    if (home) {
-        return std::filesystem::path(home) / ".config" / "ircord" / "credentials.enc";
-    }
-#endif
-    return std::filesystem::path("credentials.enc");
-}
-
 // Simple XOR encryption for remembered credentials (obfuscation, not high security)
 // In production, this should use proper keychain/os credential APIs
 std::string encrypt_simple(const std::string& data, const std::string& key) {
@@ -76,11 +60,15 @@ LoginScreen::LoginScreen() = default;
 LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
                               ftxui::ScreenInteractive& screen,
                               LoginCredentials& out_creds,
-                              const std::optional<LoginCredentials>& prefill) {
+                              const std::optional<LoginCredentials>& prefill,
+                              const std::string& initial_status,
+                              bool initial_status_is_error) {
     submitted_ = false;
     cancelled_ = false;
+    clear_local_data_ = false;
     is_loading_ = false;
-    error_message_.clear();
+    status_message_ = initial_status;
+    status_is_error_ = initial_status_is_error;
 
     // Pre-fill with existing config values
     host_ = existing_cfg.server.host;
@@ -98,7 +86,7 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
 
     // Try to load remembered credentials
     try {
-        auto creds_path = get_creds_path();
+        auto creds_path = default_credentials_path();
         if (std::filesystem::exists(creds_path)) {
             std::ifstream file(creds_path, std::ios::binary);
             if (file) {
@@ -162,6 +150,10 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
             exit_closure();
         }
     });
+    clear_button_ = Button("[ CLEAR CREDS ]", [this, exit_closure] {
+        clear_local_data_ = true;
+        exit_closure();
+    });
     quit_button_ = Button("[ QUIT ]", [this, exit_closure] {
         cancelled_ = true;
         exit_closure();
@@ -174,6 +166,7 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
         username_input_,
         passkey_input_,
         remember_checkbox_,
+        clear_button_,
         connect_button_,
         quit_button_,
     });
@@ -214,16 +207,19 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
                 filler(),
                 quit_button_->Render(),
                 text(" "),
+                clear_button_->Render(),
+                text(" "),
                 connect_button_->Render() | (is_loading_ ? dim : nothing),
             }) | hcenter,
         }) | size(WIDTH, EQUAL, kFormWidth) | border | center;
 
-        // Error message
-        Element error_el;
-        if (!error_message_.empty()) {
-            error_el = text("Error: " + error_message_) | color(Color::Red) | center;
+        Element status_el;
+        if (!status_message_.empty()) {
+            status_el = text(status_message_) |
+                        color(status_is_error_ ? Color::Red : palette::cyan()) |
+                        center;
         } else {
-            error_el = text("") | center;
+            status_el = text("") | center;
         }
 
         // Loading indicator
@@ -241,7 +237,7 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
             text("") | size(HEIGHT, EQUAL, 1),
             form,
             text("") | size(HEIGHT, EQUAL, 1),
-            error_el,
+            status_el,
             loading_el,
             filler(),
         }) | bgcolor(palette::bg()) | color(palette::fg());
@@ -275,6 +271,10 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
         return LoginResult::Cancelled;
     }
 
+    if (clear_local_data_) {
+        return LoginResult::ClearLocalData;
+    }
+
     if (submitted_ && validate_inputs()) {
         // Fill output credentials
         out_creds.host = host_;
@@ -286,7 +286,7 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
         // Save credentials if remember is checked
         if (remember_) {
             try {
-                auto creds_path = get_creds_path();
+                auto creds_path = default_credentials_path();
                 std::filesystem::create_directories(creds_path.parent_path());
                 
                 std::string data = host_ + "\n" + port_str_ + "\n" + username_ + "\n" + passkey_;
@@ -302,7 +302,7 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
         } else {
             // Delete saved credentials if remember is unchecked
             try {
-                auto creds_path = get_creds_path();
+                auto creds_path = default_credentials_path();
                 if (std::filesystem::exists(creds_path)) {
                     std::filesystem::remove(creds_path);
                 }
@@ -318,7 +318,8 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
 }
 
 void LoginScreen::set_error(const std::string& error) {
-    error_message_ = error;
+    status_message_ = error;
+    status_is_error_ = true;
 }
 
 void LoginScreen::set_loading(bool loading) {
@@ -328,15 +329,16 @@ void LoginScreen::set_loading(bool loading) {
 // build_ui() implementation is inlined in show() for proper exit handling
 
 bool LoginScreen::validate_inputs() {
-    error_message_.clear();
+    status_message_.clear();
+    status_is_error_ = true;
 
     if (host_.empty()) {
-        error_message_ = "Host is required";
+        status_message_ = "Host is required";
         return false;
     }
 
     if (port_str_.empty()) {
-        error_message_ = "Port is required";
+        status_message_ = "Port is required";
         return false;
     }
 
@@ -344,21 +346,21 @@ bool LoginScreen::validate_inputs() {
     try {
         int port = std::atoi(port_str_.c_str());
         if (port <= 0 || port > 65535) {
-            error_message_ = "Port must be between 1 and 65535";
+            status_message_ = "Port must be between 1 and 65535";
             return false;
         }
     } catch (...) {
-        error_message_ = "Port must be a valid number";
+        status_message_ = "Port must be a valid number";
         return false;
     }
 
     if (username_.empty()) {
-        error_message_ = "Username is required";
+        status_message_ = "Username is required";
         return false;
     }
 
     if (passkey_.empty()) {
-        error_message_ = "Passkey is required";
+        status_message_ = "Passkey is required";
         return false;
     }
 

@@ -132,6 +132,7 @@ ircord-client [OPTIONS] [ircord://host:port]
 Options:
   --config <path>   Path to client.toml (default: platform config dir)
   --user   <id>     Override username from config
+  --clear-creds     Clear remembered credentials and local encrypted identity
   --help            Show this help
 ```
 

@@ -45,6 +45,7 @@ static void print_help(const char* argv0) {
               << "Options:\n"
               << "  --config <path>   Path to client.toml (default: platform config dir)\n"
               << "  --user   <id>     Override user_id from config\n"
+              << "  --clear-creds     Clear remembered credentials and local encrypted identity\n"
               << "  --help            Show this help\n"
               << "\n"
               << "Examples:\n"
@@ -56,6 +57,7 @@ static void print_help(const char* argv0) {
 int main(int argc, char* argv[]) {
     std::filesystem::path config_path;
     std::string           user_id_override;
+    bool                  clear_creds = false;
     std::optional<std::pair<std::string, uint16_t>> server_url;
 
     for (int i = 1; i < argc; ++i) {
@@ -67,6 +69,8 @@ int main(int argc, char* argv[]) {
             config_path = argv[++i];
         } else if ((arg == "--user" || arg == "-u") && i + 1 < argc) {
             user_id_override = argv[++i];
+        } else if (arg == "--clear-creds") {
+            clear_creds = true;
         } else if (arg.rfind("ircord://", 0) == 0) {
             // Parse ircord:// URL
             auto parsed = parse_ircord_url(arg);
@@ -95,6 +99,16 @@ int main(int argc, char* argv[]) {
         else {
             config_path = ircord::default_config_dir() / "client.toml";
         }
+    }
+
+    if (clear_creds) {
+        auto cfg = ircord::load_config(config_path);
+        std::string status_message;
+        bool ok = ircord::clear_local_client_state(cfg, config_path, &status_message);
+        if (!status_message.empty()) {
+            std::cout << status_message << "\n";
+        }
+        return ok ? 0 : 1;
     }
 
     ircord::App app;

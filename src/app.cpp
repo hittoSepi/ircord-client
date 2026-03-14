@@ -132,6 +132,7 @@ bool App::init(const std::filesystem::path& config_path,
     // ── Config ────────────────────────────────────────────────────────────
     cfg_ = load_config(config_path);
     if (!user_id_override.empty()) cfg_.identity.user_id = user_id_override;
+    std::filesystem::create_directories(cfg_.config_dir);
 
     // ── Login Screen (FTXUI) ──────────────────────────────────────────────
     // Show the graphical login screen to get credentials
@@ -144,28 +145,62 @@ bool App::init(const std::filesystem::path& config_path,
         login_prefill = prefill;
         spdlog::info("Pre-filled server from URL: {}:{}", prefill.host, prefill.port);
     }
-    
-    {
+
+    std::string login_status;
+    bool login_status_is_error = true;
+
+    while (true) {
         ui::LoginScreen login_screen;
         ftxui::ScreenInteractive screen = ftxui::ScreenInteractive::Fullscreen();
-        
-        auto result = login_screen.show(cfg_, screen, login_creds, login_prefill);
+
+        auto result = login_screen.show(
+            cfg_, screen, login_creds, login_prefill, login_status, login_status_is_error);
         
         if (result == ui::LoginResult::Cancelled) {
             spdlog::info("Login cancelled by user");
             return false;
         }
-        
+
+        if (result == ui::LoginResult::ClearLocalData) {
+            std::string clear_status;
+            bool clear_ok = clear_local_client_state(cfg_, config_path, &clear_status);
+            login_status = clear_status;
+            login_status_is_error = !clear_ok;
+            login_prefill.reset();
+            continue;
+        }
+
         // Update config with login credentials
         cfg_.server.host = login_creds.host;
         cfg_.server.port = login_creds.port;
         cfg_.identity.user_id = login_creds.username;
-        
+
         // Save config with new values
         save_config(cfg_, config_path);
-    }
 
-    std::filesystem::create_directories(cfg_.config_dir);
+        try {
+            store_ = std::make_unique<db::LocalStore>(cfg_.db_path);
+        } catch (const std::exception& e) {
+            login_status = "Failed to open local data store: " + std::string(e.what());
+            login_status_is_error = true;
+            store_.reset();
+            continue;
+        }
+
+        crypto_ = std::make_unique<crypto::CryptoEngine>();
+        const std::string& passphrase = login_creds.passkey;
+
+        if (!crypto_->init(*store_, cfg_, passphrase)) {
+            crypto_.reset();
+            store_.reset();
+            login_status =
+                "Failed to unlock local identity. Use the original passkey or press CLEAR CREDS.";
+            login_status_is_error = true;
+            continue;
+        }
+
+        break;
+    }
 
     // ── Database ──────────────────────────────────────────────────────────
     try {
@@ -657,6 +692,42 @@ void App::handle_command_response(const CommandResponse& response) {
             state_.post_ui([this, target = *target]() {
                 state_.ensure_channel(target);
                 state_.set_active_channel(target);
+            });
+            if (ui_) ui_->notify();
+        }
+        return;
+    }
+
+    if (command == "names" && response.success()) {
+        // Parse "Users in #channel:\n@op\n+voiced\nregular\n"
+        const auto& msg = response.message();
+        auto header_end = msg.find(":\n");
+        if (header_end != std::string::npos) {
+            // Extract channel name from "Users in #channel"
+            auto prefix_end = msg.find(' ', 9); // skip "Users in "
+            std::string channel = msg.substr(9, header_end - 9);
+
+            std::vector<ChannelUserInfo> users;
+            std::istringstream lines(msg.substr(header_end + 2));
+            std::string line;
+            while (std::getline(lines, line)) {
+                if (line.empty()) continue;
+                ChannelUserInfo info;
+                if (line[0] == '@') {
+                    info.role = UserRole::Admin;
+                    info.user_id = line.substr(1);
+                } else if (line[0] == '+') {
+                    info.role = UserRole::Voice;
+                    info.user_id = line.substr(1);
+                } else {
+                    info.role = UserRole::Regular;
+                    info.user_id = line;
+                }
+                users.push_back(std::move(info));
+            }
+
+            state_.post_ui([this, channel = std::move(channel), users = std::move(users)]() {
+                state_.set_channel_users(channel, users);
             });
             if (ui_) ui_->notify();
         }
