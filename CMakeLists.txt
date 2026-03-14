@@ -245,13 +245,12 @@ add_custom_command(TARGET ircord-client POST_BUILD
 )
 
 # Copy client config to build output directory
-if(DONT_REPLACE_CONFIG EQUAL false)
 add_custom_command(TARGET ircord-client POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/config/client.toml.example"
         "$<TARGET_FILE_DIR:ircord-client>/client.toml"
     COMMENT "Copying client.toml to output directory"
 )
-endif()
+
 
 enable_testing()
