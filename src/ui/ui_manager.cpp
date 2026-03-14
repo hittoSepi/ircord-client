@@ -365,14 +365,24 @@ void UIManager::notify() {
 
 void UIManager::push_system_msg(const std::string& txt) {
     auto ch = state_.active_channel().value_or("server");
-    state_.ensure_channel(ch);
+    push_system_msg_to_channel(ch, txt, false);
+}
+
+void UIManager::push_system_msg_to_channel(const std::string& channel_id,
+                                           const std::string& txt,
+                                           bool activate_channel) {
+    std::string ch = channel_id.empty() ? "server" : channel_id;
     Message msg;
     msg.type         = Message::Type::System;
     msg.content      = txt;
     msg.sender_id    = "system";
     msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-    state_.post_ui([this, ch, m = std::move(msg)]() mutable {
+    state_.post_ui([this, ch = std::move(ch), m = std::move(msg), activate_channel]() mutable {
+        state_.ensure_channel(ch);
+        if (activate_channel) {
+            state_.set_active_channel(ch);
+        }
         state_.push_message(ch, std::move(m));
     });
     notify();
@@ -514,8 +524,11 @@ Element UIManager::build_document(int term_rows) {
 void UIManager::run(SubmitFn on_submit,
                     std::function<void()> on_quit,
                     std::function<void(int)> on_channel_switch,
+                    ChannelCycleFn on_channel_cycle,
                     PttToggleFn on_ptt_toggle,
                     OpenSettingsFn on_open_settings) {
+    screen_.ForceHandleCtrlC(false);
+
     auto renderer = Renderer([&] {
         // Drain cross-thread UI updates before rendering
         state_.drain_ui_queue();
@@ -532,6 +545,9 @@ void UIManager::run(SubmitFn on_submit,
         
         if (event == Event::Custom) {
             // Posted by notify() — just triggers a redraw
+            return true;
+        }
+        if (event.input() == "\x03" || event.input() == "\x04") {
             return true;
         }
         // F1 — PTT toggle (since FTXUI doesn't support key-release, use toggle)
@@ -603,8 +619,7 @@ void UIManager::run(SubmitFn on_submit,
             if (auto ch = state_.active_channel()) state_.scroll_down(*ch, 10);
             return true;
         }
-        if (event == Event::Escape || event.input() == "\x03" || event.input() == "\x04") {
-            // Ctrl+C or Ctrl+D → quit
+        if (event == Event::Escape) {
             if (on_quit) on_quit();
             screen_.ExitLoopClosure()();
             return true;
@@ -638,6 +653,14 @@ void UIManager::run(SubmitFn on_submit,
             event.input()[1] >= '1' && event.input()[1] <= '9') {
             if (on_channel_switch)
                 on_channel_switch(event.input()[1] - '1');
+            return true;
+        }
+        if (event.input() == "\x1b[1;3D" || event.input() == "\x1b\x1b[D") {
+            if (on_channel_cycle) on_channel_cycle(-1);
+            return true;
+        }
+        if (event.input() == "\x1b[1;3C" || event.input() == "\x1b\x1b[C") {
+            if (on_channel_cycle) on_channel_cycle(1);
             return true;
         }
         return false;

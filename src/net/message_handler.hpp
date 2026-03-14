@@ -38,12 +38,17 @@ public:
     // Callback for message persistence (optional)
     using PersistMsgFn = std::function<void(const std::string& channel_id, const Message& msg)>;
     void set_persist_callback(PersistMsgFn fn) { persist_fn_ = std::move(fn); }
+    using TraceFn = std::function<void(const std::string&)>;
+    void set_trace_callback(TraceFn fn) { trace_fn_ = std::move(fn); }
+    using CommandResponseFn = std::function<void(const CommandResponse&)>;
+    void set_command_response_callback(CommandResponseFn fn) { command_response_fn_ = std::move(fn); }
 
     // Called after auth OK: send KEY_UPLOAD
     void on_auth_ok();
 
     // Track auth state for UI feedback
     bool is_authenticated() const { return authenticated_; }
+    void on_transport_disconnected() { authenticated_ = false; }
 
     // Send KEY_REQUEST for a DM recipient and track the pending plaintext
     // so it can be sent once the KEY_BUNDLE arrives.
@@ -65,6 +70,7 @@ private:
     void handle_voice_room_state(const Envelope& env);
     void handle_ping(const Envelope& env);
     void handle_error(const Envelope& env);
+    void handle_command_response(const Envelope& env);
 
     // Helpers
     void send_envelope(MessageType type, const google::protobuf::Message& msg);
@@ -78,6 +84,8 @@ private:
     NetClient*           net_client_   = nullptr;
     voice::VoiceEngine*  voice_engine_ = nullptr;
     PersistMsgFn         persist_fn_;
+    TraceFn              trace_fn_;
+    CommandResponseFn    command_response_fn_;
 
     bool   authenticated_ = false;
     uint64_t next_seq_    = 1;

@@ -60,7 +60,11 @@ std::vector<std::string> AppState::channel_list() const {
     std::vector<std::string> result;
     result.reserve(channels_.size());
     for (auto& [id, _] : channels_) result.push_back(id);
-    std::sort(result.begin(), result.end());
+    std::sort(result.begin(), result.end(), [](const std::string& a, const std::string& b) {
+        if (a == "server") return true;
+        if (b == "server") return false;
+        return a < b;
+    });
     return result;
 }
 

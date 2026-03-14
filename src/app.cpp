@@ -2,6 +2,7 @@
 #include "input/command_parser.hpp"
 #include "ui/login_screen.hpp"
 #include "ui/settings_screen.hpp"
+#include "version.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -13,8 +14,89 @@
 #include <regex>
 #include <thread>
 #include <functional>
+#include <cctype>
+#include <optional>
+#include <sstream>
 
 namespace ircord {
+
+namespace {
+
+bool is_server_channel(std::string_view channel_id) {
+    if (channel_id.size() != 6) {
+        return false;
+    }
+
+    constexpr std::string_view kServerChannel = "server";
+    for (size_t i = 0; i < channel_id.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(channel_id[i]);
+        if (static_cast<char>(std::tolower(c)) != kServerChannel[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string canonical_channel_id(std::string channel_id) {
+    if (is_server_channel(channel_id)) {
+        return "server";
+    }
+    return channel_id;
+}
+
+std::string trim_ascii_whitespace(std::string_view text) {
+    size_t start = 0;
+    size_t end = text.size();
+    while (start < end &&
+           std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+    return std::string(text.substr(start, end - start));
+}
+
+bool is_valid_channel_char(unsigned char c) {
+    return std::isalnum(c) || c == '_' || c == '-' || c == '.';
+}
+
+std::optional<std::string> sanitize_channel_name(std::string_view raw_name) {
+    std::string channel = trim_ascii_whitespace(raw_name);
+    if (channel.empty()) {
+        return std::nullopt;
+    }
+
+    if (is_server_channel(channel)) {
+        return std::string("server");
+    }
+
+    if (channel.front() != '#') {
+        channel.insert(channel.begin(), '#');
+    }
+
+    if (channel.size() == 1) {
+        return std::nullopt;
+    }
+
+    for (size_t i = 1; i < channel.size(); ++i) {
+        if (!is_valid_channel_char(static_cast<unsigned char>(channel[i]))) {
+            return std::nullopt;
+        }
+    }
+
+    return channel;
+}
+
+std::string ascii_lower_copy(std::string text) {
+    for (char& c : text) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return text;
+}
+
+}  // namespace
 
 App::App() = default;
 
@@ -25,7 +107,8 @@ App::~App() {
 }
 
 bool App::init(const std::filesystem::path& config_path,
-               const std::string& user_id_override) {
+               const std::string& user_id_override,
+               const std::optional<std::pair<std::string, uint16_t>>& server_url) {
     config_path_ = config_path;
     
     // ── Logging ───────────────────────────────────────────────────────────
@@ -50,6 +133,14 @@ bool App::init(const std::filesystem::path& config_path,
     // ── Login Screen (FTXUI) ──────────────────────────────────────────────
     // Show the graphical login screen to get credentials
     ui::LoginCredentials login_creds;
+    
+    // Pre-fill server info if provided via ircord:// URL
+    if (server_url) {
+        login_creds.host = server_url->first;
+        login_creds.port = server_url->second;
+        spdlog::info("Pre-filled server from URL: {}:{}", login_creds.host, login_creds.port);
+    }
+    
     {
         ui::LoginScreen login_screen;
         ftxui::ScreenInteractive screen = ftxui::ScreenInteractive::Fullscreen();
@@ -120,20 +211,26 @@ bool App::init(const std::filesystem::path& config_path,
         // Wake UI for any received message
         if (ui_) ui_->notify();
     };
+    cb.on_trace = [this](const std::string& text, bool reset_attempt_timer, bool activate_server) {
+        trace_connection_phase(text, reset_attempt_timer, activate_server);
+    };
     cb.on_connected = [this]() {
         // Send HELLO
         Hello hello;
         hello.set_protocol_version(1);
-        hello.set_client_version("ircord-client/0.1.0");
+        hello.set_client_version(std::string("ircord-client/") + std::string(ircord::VERSION));
         Envelope env;
         env.set_seq(1);
         env.set_type(MT_HELLO);
         env.set_payload(hello.SerializeAsString());
         net_client_->send(env);
+        trace_connection_phase("HELLO sent", false, false);
     };
     cb.on_disconnected = [this](const std::string& reason) {
         state_.set_connected(false);
-        if (ui_) ui_->push_system_msg("Disconnected: " + reason);
+        msg_handler_->on_transport_disconnected();
+        clear_pending_channel_commands();
+        log_server_event("Disconnected: " + reason, true);
     };
 
     net_client_ = std::make_shared<net::NetClient>(ioc_, cfg_, std::move(cb));
@@ -141,6 +238,12 @@ bool App::init(const std::filesystem::path& config_path,
     msg_handler_->set_voice_engine(voice_.get());
     msg_handler_->set_persist_callback([this](const std::string& channel_id, const Message& msg) {
         persist_message(channel_id, msg);
+    });
+    msg_handler_->set_trace_callback([this](const std::string& text) {
+        trace_connection_phase(text, false, false);
+    });
+    msg_handler_->set_command_response_callback([this](const CommandResponse& response) {
+        handle_command_response(response);
     });
 
     voice_->set_send_signal([this](const VoiceSignal& sig) {
@@ -179,7 +282,7 @@ int App::run() {
     speaking_timer->expires_after(std::chrono::milliseconds(100));
     speaking_timer->async_wait([&refresh_speaking](auto) { refresh_speaking(); });
 
-    ui_->push_system_msg("IrssiCord v0.1.0 — connecting to " +
+    ui_->push_system_msg("IRCord v" + std::string(ircord::VERSION) + " — connecting to " +
                           cfg_.server.host + ":" + std::to_string(cfg_.server.port));
 
     // ── FTXUI event loop (blocks main thread) ─────────────────────────────
@@ -187,6 +290,7 @@ int App::run() {
         [this](const std::string& line) { on_submit(line); },
         [this]()                         { ioc_.stop(); },
         [this](int idx)                  { switch_to_channel_by_index(idx); },
+        [this](int delta)                { switch_channel(delta); },
         [this]()                         { voice_->toggle_voice_mode(); },
         [this]()                         { open_settings(); }
     );
@@ -221,21 +325,68 @@ void App::handle_command(const ParsedCommand& cmd) {
         ui_->push_system_msg("Goodbye.");
         return;
     }
+    if (cmd.name == "/version") {
+        ui_->push_system_msg("Client version: " + std::string(ircord::VERSION));
+        ui_->push_system_msg("Server version: " + server_version_);
+        return;
+    }
     if (cmd.name == "/settings") {
         open_settings();
         return;
     }
     if (cmd.name == "/part") {
         auto ch = state_.active_channel().value_or("");
-        if (ch.empty() || ch == "server") {
+        if (ch.empty() || is_server_channel(ch)) {
             ui_->push_system_msg("Cannot leave the server channel.");
+        } else if (!msg_handler_->is_authenticated()) {
+            log_server_event(
+                (net_client_->is_connected()
+                     ? "part blocked: authentication still in progress for "
+                     : "part blocked: not connected for ") + ch,
+                true);
         } else {
-            std::string left = ch;          // copy before removal
-            state_.remove_channel(left);    // active channel updates first
-            ui_->push_system_msg("Left " + left + ".");  // message goes to new active ch
+            {
+                std::lock_guard lk(pending_command_mu_);
+                if (has_pending_command(pending_parts_, ch)) {
+                    log_server_event("part already pending for " + ch, true);
+                    ui_->notify();
+                    return;
+                }
+                pending_parts_.push_back(ch);
+            }
+            msg_handler_->send_command("part", {ch});
+            log_server_event("part requested for " + ch, false);
         }
     } else if (cmd.name == "/join" && !cmd.args.empty()) {
-        switch_to_channel(cmd.args[0]);
+        auto target = sanitize_channel_name(cmd.args[0]);
+        if (!target) {
+            ui_->push_system_msg("Invalid channel name. Use letters, numbers, ., - or _.");
+            return;
+        }
+        if (is_server_channel(*target)) {
+            ui_->push_system_msg("`server` is a reserved internal tab.");
+            return;
+        }
+        if (!msg_handler_->is_authenticated()) {
+            log_server_event(
+                (net_client_->is_connected()
+                     ? "join blocked: authentication still in progress for "
+                     : "join blocked: not connected for ") + *target,
+                true);
+            ui_->notify();
+            return;
+        }
+        {
+            std::lock_guard lk(pending_command_mu_);
+            if (has_pending_command(pending_joins_, *target)) {
+                log_server_event("join already pending for " + *target, true);
+                ui_->notify();
+                return;
+            }
+            pending_joins_.push_back(*target);
+        }
+        msg_handler_->send_command("join", {*target});
+        log_server_event("join requested for " + *target, false);
     } else if (cmd.name == "/msg" && cmd.args.size() >= 2) {
         std::string target = cmd.args[0];
         std::string text;
@@ -346,9 +497,10 @@ void App::handle_command(const ParsedCommand& cmd) {
     } else if (cmd.name == "/help") {
         ui_->push_system_msg(
             "Commands: /join /part /msg /me /call /accept /hangup /voice "
-            "/mute /deafen /ptt /trust /names /search /clear /settings /quit");
+            "/mute /deafen /ptt /trust /names /search /clear /settings /version /quit");
         ui_->push_system_msg(
-            "Shortcuts: F1=PTT toggle, F12=Settings, Alt+1-9=Switch channel, Esc=Quit");
+            "Shortcuts: F1=PTT toggle, F12=Settings, Alt+1-9=Switch channel, "
+            "Alt+Left/Right=Previous/next channel, Esc=Quit");
     } else {
         ui_->push_system_msg("Unknown command: " + cmd.name);
     }
@@ -356,16 +508,20 @@ void App::handle_command(const ParsedCommand& cmd) {
 }
 
 void App::send_chat(const std::string& text) {
-    if (!net_client_->is_connected()) {
-        ui_->push_system_msg("Not connected.");
+    if (!msg_handler_->is_authenticated()) {
+        if (net_client_->is_connected()) {
+            log_server_event("message blocked: authentication still in progress", true);
+        } else {
+            log_server_event("message blocked: not connected", true);
+        }
         return;
     }
-    auto active = state_.active_channel().value_or("");
+    auto active = canonical_channel_id(state_.active_channel().value_or(""));
     if (active.empty()) {
         ui_->push_system_msg("No active channel.");
         return;
     }
-    if (active == "server") {
+    if (is_server_channel(active)) {
         ui_->push_system_msg("Cannot send messages here. Use /join #channel or /msg <user>.");
         return;
     }
@@ -444,6 +600,95 @@ void App::persist_message(const std::string& channel_id, const Message& msg) {
     store_->save_message(row);
 }
 
+void App::log_system_message(const std::string& channel_id,
+                             const std::string& text,
+                             bool activate_channel) {
+    if (!ui_) {
+        return;
+    }
+    ui_->push_system_msg_to_channel(channel_id, text, activate_channel);
+}
+
+void App::log_server_event(const std::string& text, bool activate_server) {
+    log_system_message("server", text, activate_server);
+}
+
+void App::trace_connection_phase(const std::string& phase,
+                                 bool reset_attempt_timer,
+                                 bool activate_server) {
+    auto now = std::chrono::steady_clock::now();
+    long long elapsed_ms = 0;
+    {
+        std::lock_guard lk(connection_trace_mu_);
+        if (reset_attempt_timer || !has_connection_attempt_) {
+            connection_attempt_started_ = now;
+            has_connection_attempt_ = true;
+        }
+        elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - connection_attempt_started_).count();
+    }
+
+    std::ostringstream oss;
+    oss << "[+" << elapsed_ms << "ms] " << phase;
+    log_server_event(oss.str(), activate_server);
+}
+
+void App::handle_command_response(const CommandResponse& response) {
+    const std::string command = ascii_lower_copy(response.command());
+    log_server_event(
+        std::string(response.success() ? "[ok] " : "[fail] ") + command + ": " + response.message(),
+        false);
+
+    if (command == "join") {
+        std::optional<std::string> target;
+        {
+            std::lock_guard lk(pending_command_mu_);
+            if (!pending_joins_.empty()) {
+                target = pending_joins_.front();
+                pending_joins_.pop_front();
+            }
+        }
+
+        if (response.success() && target) {
+            state_.post_ui([this, target = *target]() {
+                state_.ensure_channel(target);
+                state_.set_active_channel(target);
+            });
+            if (ui_) ui_->notify();
+        }
+        return;
+    }
+
+    if (command == "part") {
+        std::optional<std::string> target;
+        {
+            std::lock_guard lk(pending_command_mu_);
+            if (!pending_parts_.empty()) {
+                target = pending_parts_.front();
+                pending_parts_.pop_front();
+            }
+        }
+
+        if (response.success() && target) {
+            state_.post_ui([this, target = *target]() {
+                state_.remove_channel(target);
+            });
+            if (ui_) ui_->notify();
+        }
+    }
+}
+
+void App::clear_pending_channel_commands() {
+    std::lock_guard lk(pending_command_mu_);
+    pending_joins_.clear();
+    pending_parts_.clear();
+}
+
+bool App::has_pending_command(const std::deque<std::string>& queue,
+                              const std::string& target) const {
+    return std::find(queue.begin(), queue.end(), target) != queue.end();
+}
+
 void App::switch_channel(int delta) {
     auto channels = state_.channel_list();
     if (channels.empty()) return;
@@ -461,9 +706,10 @@ void App::switch_to_channel_by_index(int index) {
 }
 
 void App::switch_to_channel(const std::string& channel_id) {
-    state_.ensure_channel(channel_id);
-    state_.set_active_channel(channel_id);
-    ui_->push_system_msg("Switched to " + channel_id);
+    auto canonical_id = canonical_channel_id(channel_id);
+    state_.ensure_channel(canonical_id);
+    state_.set_active_channel(canonical_id);
+    ui_->push_system_msg("Switched to " + canonical_id);
 }
 
 void App::open_settings() {

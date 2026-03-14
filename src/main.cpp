@@ -2,19 +2,61 @@
 #include <iostream>
 #include <string>
 #include <filesystem>
+#include <optional>
+
+// Parse ircord:// URL and return host:port
+// Format: ircord://host:port or ircord://host (default port 6697)
+static std::optional<std::pair<std::string, uint16_t>> parse_ircord_url(const std::string& url) {
+    const std::string prefix = "ircord://";
+    if (url.rfind(prefix, 0) != 0) {
+        return std::nullopt;
+    }
+    
+    std::string rest = url.substr(prefix.length());
+    
+    // Remove any trailing slash or path
+    size_t slash_pos = rest.find('/');
+    if (slash_pos != std::string::npos) {
+        rest = rest.substr(0, slash_pos);
+    }
+    
+    // Parse host and port
+    size_t colon_pos = rest.find(':');
+    if (colon_pos == std::string::npos) {
+        // No port specified, use default
+        return std::make_pair(rest, uint16_t(6697));
+    }
+    
+    std::string host = rest.substr(0, colon_pos);
+    try {
+        int port = std::stoi(rest.substr(colon_pos + 1));
+        if (port < 1 || port > 65535) {
+            return std::nullopt;
+        }
+        return std::make_pair(host, uint16_t(port));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
 
 static void print_help(const char* argv0) {
-    std::cout << "Usage: " << argv0 << " [OPTIONS]\n"
+    std::cout << "Usage: " << argv0 << " [OPTIONS] [ircord://host:port]\n"
               << "\n"
               << "Options:\n"
               << "  --config <path>   Path to client.toml (default: platform config dir)\n"
               << "  --user   <id>     Override user_id from config\n"
-              << "  --help            Show this help\n";
+              << "  --help            Show this help\n"
+              << "\n"
+              << "Examples:\n"
+              << "  " << argv0 << "\n"
+              << "  " << argv0 << " ircord://chat.example.com:6697\n"
+              << "  " << argv0 << " ircord://localhost:6667\n";
 }
 
 int main(int argc, char* argv[]) {
     std::filesystem::path config_path;
     std::string           user_id_override;
+    std::optional<std::pair<std::string, uint16_t>> server_url;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -25,6 +67,16 @@ int main(int argc, char* argv[]) {
             config_path = argv[++i];
         } else if ((arg == "--user" || arg == "-u") && i + 1 < argc) {
             user_id_override = argv[++i];
+        } else if (arg.rfind("ircord://", 0) == 0) {
+            // Parse ircord:// URL
+            auto parsed = parse_ircord_url(arg);
+            if (parsed) {
+                server_url = parsed;
+            } else {
+                std::cerr << "Invalid IRCord URL: " << arg << "\n";
+                std::cerr << "Expected format: ircord://host:port or ircord://host\n";
+                return 1;
+            }
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
             print_help(argv[0]);
@@ -46,7 +98,7 @@ int main(int argc, char* argv[]) {
     }
 
     ircord::App app;
-    if (!app.init(config_path, user_id_override)) {
+    if (!app.init(config_path, user_id_override, server_url)) {
         std::cerr << "Application initialization failed.\n";
         return 1;
     }

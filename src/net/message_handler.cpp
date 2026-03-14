@@ -2,6 +2,7 @@
 #include "net/net_client.hpp"
 #include "crypto/crypto_engine.hpp"
 #include "voice/voice_engine.hpp"
+#include "version.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <algorithm>
@@ -27,6 +28,7 @@ void MessageHandler::dispatch(const Envelope& env) {
     case MT_VOICE_ROOM_STATE:  handle_voice_room_state(env);  break;
     case MT_PING:              handle_ping(env);              break;
     case MT_ERROR:          handle_error(env);          break;
+    case MT_COMMAND_RESPONSE: handle_command_response(env); break;
     default:
         spdlog::debug("Unhandled message type: {}", static_cast<int>(env.type()));
         break;
@@ -44,6 +46,7 @@ void MessageHandler::handle_auth_challenge(const Envelope& env) {
     std::vector<uint8_t> nonce(nonce_str.begin(), nonce_str.end());
 
     spdlog::debug("Received auth challenge, signing...");
+    if (trace_fn_) trace_fn_("AUTH_CHALLENGE received");
 
     auto sig     = crypto_.sign_challenge(nonce, cfg_.identity.user_id);
     auto id_pub  = crypto_.identity_pub();
@@ -57,11 +60,13 @@ void MessageHandler::handle_auth_challenge(const Envelope& env) {
     resp.set_spk_sig(spk_inf.sig.data(), spk_inf.sig.size());
 
     send_envelope(MT_AUTH_RESPONSE, resp);
+    if (trace_fn_) trace_fn_("AUTH_RESPONSE sent");
 }
 
 void MessageHandler::handle_auth_ok(const Envelope& env) {
     (void)env;
     authenticated_ = true;
+    if (trace_fn_) trace_fn_("AUTH_OK received");
     spdlog::info("Authentication successful");
     push_system("Authenticated as " + cfg_.identity.user_id);
     state_.set_connected(true);
@@ -77,6 +82,8 @@ void MessageHandler::on_auth_ok() {
 
 void MessageHandler::handle_auth_fail(const Envelope& env) {
     (void)env;
+    authenticated_ = false;
+    if (trace_fn_) trace_fn_("AUTH_FAIL received");
     spdlog::error("Authentication failed");
     push_system("Authentication failed! Check your identity key.");
     state_.set_connected(false);
@@ -320,6 +327,21 @@ void MessageHandler::handle_error(const Envelope& env) {
     push_system("Server error: " + err.message());
 }
 
+void MessageHandler::handle_command_response(const Envelope& env) {
+    CommandResponse response;
+    if (!response.ParseFromString(env.payload())) {
+        spdlog::warn("Failed to parse CommandResponse");
+        return;
+    }
+
+    if (command_response_fn_) {
+        command_response_fn_(response);
+        return;
+    }
+
+    push_system("Command " + response.command() + ": " + response.message());
+}
+
 void MessageHandler::send_envelope(MessageType type, const google::protobuf::Message& msg) {
     if (!net_client_) return;
 
@@ -334,23 +356,22 @@ void MessageHandler::send_envelope(MessageType type, const google::protobuf::Mes
 }
 
 void MessageHandler::push_system(const std::string& text) {
-    auto ch = state_.active_channel().value_or("server");
-    state_.ensure_channel(ch);
     Message msg;
     msg.type         = Message::Type::System;
     msg.content      = text;
     msg.sender_id    = "system";
     msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-    state_.post_ui([this, ch, m = std::move(msg)]() mutable {
-        state_.push_message(ch, std::move(m));
+    state_.post_ui([this, m = std::move(msg)]() mutable {
+        state_.ensure_channel("server");
+        state_.push_message("server", std::move(m));
     });
 }
 
 void MessageHandler::send_hello() {
     Hello hello;
     hello.set_protocol_version(1);
-    hello.set_client_version("ircord-client/0.1.0");
+    hello.set_client_version(std::string("ircord-client/") + std::string(ircord::VERSION));
     send_envelope(MT_HELLO, hello);
 }
 

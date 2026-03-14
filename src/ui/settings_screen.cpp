@@ -92,6 +92,7 @@ SettingsResult SettingsScreen::show(ClientConfig& cfg,
     load_settings_from_config(cfg);
     build_ui();
     
+    screen.ForceHandleCtrlC(false);
     auto exit_closure = screen.ExitLoopClosure();
     
     // Main renderer
@@ -145,6 +146,9 @@ SettingsResult SettingsScreen::show(ClientConfig& cfg,
     
     // Event handler
     auto component = CatchEvent(renderer, [this, exit_closure, &cfg](Event event) -> bool {
+        if (event.input() == "\x03" || event.input() == "\x04") {
+            return true;
+        }
         if (event == Event::Escape) {
             cancelled_ = true;
             exit_closure();

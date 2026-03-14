@@ -54,19 +54,38 @@ void NetClient::stop() {
 
 asio::awaitable<void> NetClient::run() {
     while (!stopping_.load()) {
+        if (callbacks_.on_trace) {
+            callbacks_.on_trace(
+                "connect start (attempt " + std::to_string(reconnect_attempt_) + ")",
+                true,
+                true);
+        }
+
+        std::string disconnect_reason = "connection closed";
         try {
             co_await connect_once();
         } catch (const std::exception& e) {
-            if (!stopping_.load())
+            disconnect_reason = e.what();
+            if (!stopping_.load()) {
                 spdlog::warn("Connection error: {}", e.what());
+            }
         }
 
         if (stopping_.load()) break;
 
         connected_.store(false);
         if (callbacks_.on_disconnected) {
-            callbacks_.on_disconnected("Reconnecting in " +
-                std::to_string(reconnect_delay_s_) + "s...");
+            callbacks_.on_disconnected(disconnect_reason);
+        }
+
+        cumulative_wait_s_ += reconnect_delay_s_;
+        if (callbacks_.on_trace) {
+            callbacks_.on_trace(
+                "reconnect in " + std::to_string(reconnect_delay_s_) + "s (attempt " +
+                    std::to_string(reconnect_attempt_ + 1) +
+                    ", total wait so far ~" + std::to_string(cumulative_wait_s_) + "s)",
+                false,
+                true);
         }
 
         spdlog::info("Reconnecting in {}s...", reconnect_delay_s_);
@@ -75,6 +94,7 @@ asio::awaitable<void> NetClient::run() {
         co_await reconnect_timer_.async_wait(
             asio::redirect_error(use_awaitable, ec));
 
+        ++reconnect_attempt_;
         reconnect_delay_s_ = std::min(reconnect_delay_s_ * 2, 60);
     }
 }
@@ -95,9 +115,11 @@ asio::awaitable<void> NetClient::connect_once() {
     SSL_set_tlsext_host_name(socket->native_handle(), cfg_.server.host.c_str());
     // Hostname verification is handled via TOFU cert pinning in verify_cert_pin()
     co_await asio::async_connect(socket->lowest_layer(), endpoints, use_awaitable);
+    if (callbacks_.on_trace) callbacks_.on_trace("TCP connected", false, false);
     socket->lowest_layer().set_option(asio::ip::tcp::no_delay(true));
 
     co_await socket->async_handshake(asio::ssl::stream_base::client, use_awaitable);
+    if (callbacks_.on_trace) callbacks_.on_trace("TLS handshake done", false, false);
 
     if (!verify_cert_pin(socket->native_handle())) {
         throw std::runtime_error("Certificate pinning check failed");
@@ -107,6 +129,8 @@ asio::awaitable<void> NetClient::connect_once() {
     connected_.store(true);
     active_socket_ = socket;
     reconnect_delay_s_ = 1;
+    reconnect_attempt_ = 1;
+    cumulative_wait_s_ = 0;
 
     if (callbacks_.on_connected) callbacks_.on_connected();
 

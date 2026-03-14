@@ -5,6 +5,7 @@ endif()
 
 set(PROJECT_NAME "ircord-client")
 set(PROJECT_DESCRIPTION "IRCord Desktop and Linux application")
+#set(DONT_REPLACE_CONFIG true)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -244,11 +245,13 @@ add_custom_command(TARGET ircord-client POST_BUILD
 )
 
 # Copy client config to build output directory
+if(DONT_REPLACE_CONFIG EQUAL false)
 add_custom_command(TARGET ircord-client POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/config/client.toml.example"
         "$<TARGET_FILE_DIR:ircord-client>/client.toml"
     COMMENT "Copying client.toml to output directory"
 )
+endif()
 
 enable_testing()

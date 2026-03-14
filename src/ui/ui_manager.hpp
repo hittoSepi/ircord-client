@@ -24,6 +24,7 @@ namespace ircord::ui {
 using SubmitFn = std::function<void(const std::string&)>;
 using PttToggleFn = std::function<void()>;
 using OpenSettingsFn = std::function<void()>;
+using ChannelCycleFn = std::function<void(int)>;
 
 // UIManager owns the FTXUI ScreenInteractive and builds the full UI component.
 // Call run() from the main thread — it blocks until the user quits.
@@ -33,15 +34,20 @@ public:
 
     // Build the component tree and run the FTXUI event loop (blocks).
     // on_channel_switch(i): called with 0-based index when user presses Alt+1..9.
+    // on_channel_cycle(delta): called with -1/+1 for Alt+Left/Alt+Right.
     void run(SubmitFn on_submit,
              std::function<void()> on_quit,
              std::function<void(int)> on_channel_switch = {},
+             ChannelCycleFn on_channel_cycle = {},
              PttToggleFn on_ptt_toggle = {},
              OpenSettingsFn on_open_settings = {});
 
     // Push a system message to the active (or server) channel.
     // Thread-safe: safe to call from IO/preview threads.
     void push_system_msg(const std::string& text);
+    void push_system_msg_to_channel(const std::string& channel_id,
+                                    const std::string& text,
+                                    bool activate_channel = false);
 
     // Wake the FTXUI event loop after AppState changes.
     // Called internally by AppState::post_ui() wiring.

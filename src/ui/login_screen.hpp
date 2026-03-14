@@ -65,6 +65,7 @@ private:
     ftxui::Component passkey_input_;
     ftxui::Component remember_checkbox_;
     ftxui::Component connect_button_;
+    ftxui::Component quit_button_;
     ftxui::Component container_;
 };
 

@@ -12,8 +12,11 @@
 #include "input/command_parser.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <chrono>
+#include <deque>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -25,7 +28,8 @@ public:
     ~App();
 
     bool init(const std::filesystem::path& config_path,
-              const std::string& user_id_override = {});
+              const std::string& user_id_override = {},
+              const std::optional<std::pair<std::string, uint16_t>>& server_url = std::nullopt);
 
     // Runs FTXUI event loop on main thread (blocks until quit).
     int run();
@@ -40,6 +44,17 @@ private:
     // Called by UIManager on Alt+1..9; index is 0-based into sorted channel list.
     void switch_to_channel_by_index(int index);
     void persist_message(const std::string& channel_id, const Message& msg);
+    void log_system_message(const std::string& channel_id,
+                            const std::string& text,
+                            bool activate_channel = false);
+    void log_server_event(const std::string& text, bool activate_server = false);
+    void trace_connection_phase(const std::string& phase,
+                                bool reset_attempt_timer = false,
+                                bool activate_server = false);
+    void handle_command_response(const CommandResponse& response);
+    void clear_pending_channel_commands();
+    bool has_pending_command(const std::deque<std::string>& queue,
+                             const std::string& target) const;
 
     // Open settings screen
     void open_settings();
@@ -55,6 +70,7 @@ private:
 
     ClientConfig cfg_;
     std::filesystem::path config_path_;
+    std::string server_version_ = "unknown (server does not advertise version yet)";
 
     std::unique_ptr<db::LocalStore>         store_;
     AppState                                state_;
@@ -68,6 +84,14 @@ private:
     std::unique_ptr<net::MessageHandler>    msg_handler_;
 
     std::thread io_thread_;
+
+    mutable std::mutex pending_command_mu_;
+    std::deque<std::string> pending_joins_;
+    std::deque<std::string> pending_parts_;
+
+    mutable std::mutex connection_trace_mu_;
+    std::chrono::steady_clock::time_point connection_attempt_started_{};
+    bool has_connection_attempt_ = false;
     
     // Flag to indicate if app should exit (for settings logout)
     bool should_exit_ = false;

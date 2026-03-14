@@ -1,5 +1,6 @@
 #include "ui/login_screen.hpp"
 #include "ui/color_scheme.hpp"
+#include "version.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -75,6 +76,11 @@ LoginScreen::LoginScreen() = default;
 LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
                               ftxui::ScreenInteractive& screen,
                               LoginCredentials& out_creds) {
+    submitted_ = false;
+    cancelled_ = false;
+    is_loading_ = false;
+    error_message_.clear();
+
     // Pre-fill with existing config values
     host_ = existing_cfg.server.host;
     if (host_.empty() || host_ == "localhost") {
@@ -123,7 +129,14 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
     }
 
     // Get exit closure before building UI
+    screen.ForceHandleCtrlC(false);
     auto exit_closure = screen.ExitLoopClosure();
+
+    host_input_ = Input(&host_, "chat.rausku.com");
+    port_input_ = Input(&port_str_, "6697");
+    username_input_ = Input(&username_, "username");
+    passkey_input_ = Input(&passkey_, "passkey");
+    remember_checkbox_ = Checkbox(" Remember credentials", &remember_);
 
     // Connect button callback - exits the loop on valid submit
     connect_button_ = Button("[ CONNECT ]", [this, exit_closure] {
@@ -131,6 +144,10 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
             submitted_ = true;
             exit_closure();
         }
+    });
+    quit_button_ = Button("[ QUIT ]", [this, exit_closure] {
+        cancelled_ = true;
+        exit_closure();
     });
 
     // Update container with new button
@@ -141,38 +158,48 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
         passkey_input_,
         remember_checkbox_,
         connect_button_,
+        quit_button_,
     });
 
     // Build the UI with event handling
     auto base_renderer = Renderer(container_, [this] {
+        constexpr int kInputWidth = 32;
+        constexpr int kFormWidth = 52;
+
         // Title
-        auto title = text("IRCord v. 0.20") | bold | color(palette::blue()) | center;
+        auto title = text(std::string("IRCord v. ") + std::string(ircord::VERSION)) |
+                     bold | color(palette::blue()) | center;
 
         // Build the form
         auto form = vbox({
             hbox({
                 text("HOST:     ") | color(palette::comment()),
-                host_input_->Render() | size(WIDTH, GREATER_THAN, 25) | border,
+                host_input_->Render() | size(WIDTH, EQUAL, kInputWidth) | border,
             }),
+            text(""),
             hbox({
                 text("PORT:     ") | color(palette::comment()),
-                port_input_->Render() | size(WIDTH, GREATER_THAN, 25) | border,
+                port_input_->Render() | size(WIDTH, EQUAL, kInputWidth) | border,
             }),
             separator(),
             hbox({
                 text("USERNAME: ") | color(palette::comment()),
-                username_input_->Render() | size(WIDTH, GREATER_THAN, 25) | border,
+                username_input_->Render() | size(WIDTH, EQUAL, kInputWidth) | border,
             }),
+            text(""),
             hbox({
                 text("PASSKEY:  ") | color(palette::comment()),
-                passkey_input_->Render() | size(WIDTH, GREATER_THAN, 25) | border,
+                passkey_input_->Render() | size(WIDTH, EQUAL, kInputWidth) | border,
             }),
+            text(""),
             hbox({
                 remember_checkbox_->Render(),
                 filler(),
+                quit_button_->Render(),
+                text(" "),
                 connect_button_->Render() | (is_loading_ ? dim : nothing),
             }) | hcenter,
-        }) | border | center;
+        }) | size(WIDTH, EQUAL, kFormWidth) | border | center;
 
         // Error message
         Element error_el;
@@ -205,7 +232,10 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
 
     // Event handler for Escape and Enter
     auto component = CatchEvent(base_renderer, [this, exit_closure](Event event) -> bool {
-        if (event == Event::Escape || event.input() == "\x03" || event.input() == "\x04") {
+        if (event.input() == "\x03" || event.input() == "\x04") {
+            return true;
+        }
+        if (event == Event::Escape) {
             cancelled_ = true;
             exit_closure();
             return true;

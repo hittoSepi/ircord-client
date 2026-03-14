@@ -28,6 +28,7 @@ struct NetCallbacks {
     std::function<void(const Envelope&)> on_message;
     std::function<void()>                on_connected;
     std::function<void(const std::string&)> on_disconnected;
+    std::function<void(const std::string&, bool, bool)> on_trace;
 };
 
 // Async TLS TCP client with auto-reconnect and framing.
@@ -80,6 +81,8 @@ private:
 
     // Reconnect backoff (seconds): 1→2→4→...→60
     int reconnect_delay_s_ = 1;
+    int reconnect_attempt_ = 1;
+    int cumulative_wait_s_ = 0;
 
     static constexpr size_t kMaxFrameSize = 65536;
     static constexpr uint32_t kProtocolVersion = 1;
