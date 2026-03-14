@@ -1,11 +1,23 @@
-# IrssiCord Client
+# IRCord Client
 
-End-to-end encrypted chat and voice for friend groups. Terminal UI with irssi-style aesthetics.
+End-to-end encrypted chat and voice client for friend groups. Terminal UI with irssi-style aesthetics, mouse support, and full Signal Protocol encryption.
+
+## Features
+
+- 🔒 **End-to-end encryption** via Signal Protocol (X3DH + Double Ratchet)
+- 👥 **Group chats** with Sender Keys for efficient multi-party encryption
+- 🖱️ **Mouse support** — click channels, select text, resize panels
+- 🎙️ **Voice rooms** — WebRTC P2P voice calls
+- 📋 **Clipboard integration** — `Ctrl+V` paste support
+- 🔗 **Link previews** — automatic URL fetching
+- 🎨 **Themes** — Tokyo Night and other color schemes
+- ⌨️ **IRC-style commands** — `/join`, `/part`, `/msg`, `/call`
+- 🔐 **Certificate pinning** — trust-on-first-use (TOFU)
 
 ## Requirements
 
 - Windows 10+ or Linux (x64)
-- A server address and port from whoever runs your IrssiCord server
+- A server address and port from whoever runs your IRCord server
 
 ## First Run
 
@@ -14,7 +26,7 @@ End-to-end encrypted chat and voice for friend groups. Terminal UI with irssi-st
    ```toml
    [server]
    host = "your.server.address"
-   port = 6667
+   port = 6697
    ```
 3. Run `ircord-client.exe` (Windows) or `./ircord-client` (Linux)
 4. If no username is set in the config, you will be prompted to enter one — it is saved automatically for future runs
@@ -22,10 +34,14 @@ End-to-end encrypted chat and voice for friend groups. Terminal UI with irssi-st
 
 > **Keep your passphrase safe.** It encrypts your identity key. Losing it means losing access to your account.
 
-You can also launch directly with an `ircord://` quick-connect URL:
-```text
+## Quick Connect
+
+Launch directly with an `ircord://` quick-connect URL:
+```bash
 ircord-client ircord://chat.example.com:6697
 ```
+
+Or from a web browser when clicking an IRCord server link on the landing page.
 
 ## Config Location
 
@@ -37,7 +53,7 @@ If no `--config` flag is passed, the client looks for config in the platform def
 | Linux    | `~/.config/ircord/client.toml` |
 
 You can also pass a custom path:
-```
+```bash
 ircord-client --config /path/to/client.toml
 ```
 
@@ -46,7 +62,7 @@ ircord-client --config /path/to/client.toml
 ```toml
 [server]
 host = "your.server.address"   # Server hostname or IP
-port = 6667                    # Server port
+port = 6697                    # Server port
 # cert_pin = ""                # SHA-256 certificate fingerprint (set automatically on first connect)
 
 [identity]
@@ -56,6 +72,9 @@ user_id = "Alice"              # Your username (set automatically on first run i
 theme = "tokyo-night"          # UI color theme
 timestamp_format = "%H:%M"     # Message timestamp format
 max_messages = 1000            # Messages kept in memory per channel
+show_user_list = true          # Show right-side user list panel
+user_list_width = 20           # Width of user list in characters
+user_list_collapsed = false    # Whether user list is collapsed
 
 [voice]
 input_device  = ""             # Microphone (empty = system default)
@@ -92,12 +111,18 @@ verify_peer = true             # Verify server TLS certificate (keep true in pro
 | `/hangup` | End current call |
 | `/quit` | Exit the client |
 
-## Security
+## Mouse Support
 
-- **End-to-end encrypted** — the server never sees message content
-- **Signal Protocol** — X3DH key agreement + Double Ratchet for forward secrecy
-- **Identity key** — stored locally, encrypted at rest with your passphrase
-- **Voice** — WebRTC P2P (audio does not pass through the server)
+| Action | Description |
+|--------|-------------|
+| Click channel tab | Switch active channel |
+| Click user list item | Mention user in input |
+| Right-click user | Context menu (if available) |
+| Drag user list border | Resize panel width |
+| Click + drag message | Select text |
+| Double-click message | Select entire message |
+| Triple-click message | Select message with sender, auto-copies to clipboard |
+| Mouse wheel | Scroll message history |
 
 ## Command Line Options
 
@@ -108,6 +133,31 @@ Options:
   --config <path>   Path to client.toml (default: platform config dir)
   --user   <id>     Override username from config
   --help            Show this help
+```
+
+## Security
+
+- **End-to-end encrypted** — the server never sees message content
+- **Signal Protocol** — X3DH key agreement + Double Ratchet for forward secrecy
+- **Identity key** — stored locally, encrypted at rest with your passphrase
+- **Voice** — WebRTC P2P (audio does not pass through the server)
+- **Certificate pinning** — automatic trust-on-first-use for server certificates
+
+## Building from Source
+
+### Prerequisites
+
+- CMake 3.20+
+- C++20 compiler (MSVC 2022+, GCC 11+, Clang 13+)
+- vcpkg
+
+### Build
+
+```bash
+cd ircord-client
+mkdir build && cd build
+cmake ..
+cmake --build . --config Release
 ```
 
 ## Troubleshooting
@@ -123,3 +173,13 @@ If the server uses a self-signed certificate, set `verify_peer = false` in `[tls
 
 **Voice not working**
 Make sure `input_device` and `output_device` are empty (system default) or set to a valid device name. Check that the server is reachable for signaling.
+
+## Related Projects
+
+- [ircord-server](../ircord-server) — C++ relay server
+- [ircord-android](../ircord-android) — Android mobile client
+- [ircord-plugin](../ircord-plugin) — Plugin system
+
+## License
+
+MIT License — see LICENSE file for details.
