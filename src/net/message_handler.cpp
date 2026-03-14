@@ -58,6 +58,10 @@ void MessageHandler::handle_auth_challenge(const Envelope& env) {
     resp.set_signature(sig.data(), sig.size());
     resp.set_signed_prekey(spk_inf.pub.data(), spk_inf.pub.size());
     resp.set_spk_sig(spk_inf.sig.data(), spk_inf.sig.size());
+    // Include password for key recovery if configured
+    if (!cfg_.identity.password.empty()) {
+        resp.set_password(cfg_.identity.password);
+    }
 
     send_envelope(MT_AUTH_RESPONSE, resp);
     if (trace_fn_) trace_fn_("AUTH_RESPONSE sent");
@@ -81,11 +85,23 @@ void MessageHandler::on_auth_ok() {
 }
 
 void MessageHandler::handle_auth_fail(const Envelope& env) {
-    (void)env;
     authenticated_ = false;
     if (trace_fn_) trace_fn_("AUTH_FAIL received");
-    spdlog::error("Authentication failed");
-    push_system("Authentication failed! Check your identity key.");
+
+    Error err;
+    std::string detail;
+    if (err.ParseFromString(env.payload())) {
+        detail = err.message();
+        spdlog::error("Authentication failed (code {}): {}", err.code(), detail);
+    } else {
+        spdlog::error("Authentication failed");
+    }
+
+    if (!detail.empty()) {
+        push_system("Authentication failed: " + detail);
+    } else {
+        push_system("Authentication failed! Check your identity key.");
+    }
     state_.set_connected(false);
 }
 
@@ -136,6 +152,19 @@ void MessageHandler::handle_chat(const Envelope& env) {
         persist_fn_(channel_id, msg);
     }
 
+    // Ensure sender appears in channel user list (for channel messages)
+    std::string sender = chat.sender_id();
+    if (!channel_id.empty() && channel_id[0] == '#' && !sender.empty()) {
+        auto existing = state_.channel_user(channel_id, sender);
+        if (!existing.has_value()) {
+            ChannelUserInfo info;
+            info.user_id = sender;
+            info.role = UserRole::Regular;
+            info.presence = PresenceStatus::Online;
+            state_.add_channel_user(channel_id, info);
+        }
+    }
+
     state_.post_ui([this, channel_id, m = std::move(msg)]() mutable {
         state_.push_message(channel_id, std::move(m));
     });
@@ -173,32 +202,60 @@ void MessageHandler::handle_key_bundle(const Envelope& env) {
     crypto_.on_key_bundle(bundle, recipient_id);
     spdlog::info("Established X3DH session with '{}'", recipient_id);
 
-    // Flush pending plaintext if we queued one while waiting for this bundle
+    // Flush all pending plaintexts queued while waiting for this bundle
     auto it = pending_sends_.find(recipient_id);
     if (it == pending_sends_.end()) return;
 
-    std::string plaintext = std::move(it->second);
+    std::vector<std::string> queued = std::move(it->second);
     pending_sends_.erase(it);
 
-    ChatEnvelope chat = crypto_.encrypt(
-        cfg_.identity.user_id, recipient_id, plaintext,
-        [](const std::string&) { /* session exists now — no re-request needed */ });
+    int sent = 0, failed = 0;
+    for (const auto& plaintext : queued) {
+        ChatEnvelope chat = crypto_.encrypt(
+            cfg_.identity.user_id, recipient_id, plaintext,
+            [](const std::string&) { /* session exists now — no re-request needed */ });
 
-    if (!chat.sender_id().empty()) {
-        send_envelope(MT_CHAT_ENVELOPE, chat);
-        spdlog::debug("Flushed pending DM to '{}'", recipient_id);
-    } else {
-        spdlog::error("Re-encrypt failed for pending DM to '{}'", recipient_id);
+        if (!chat.sender_id().empty()) {
+            send_envelope(MT_CHAT_ENVELOPE, chat);
+            ++sent;
+        } else {
+            spdlog::error("Re-encrypt failed for pending DM to '{}'", recipient_id);
+            ++failed;
+        }
+    }
+    spdlog::debug("Flushed {} pending DM(s) to '{}' ({} failed)", sent, recipient_id, failed);
+    if (failed > 0) {
+        push_system("Failed to send " + std::to_string(failed) + " message(s) to " + recipient_id);
     }
 }
 
 void MessageHandler::request_key(const std::string& recipient_id,
                                   const std::string& plaintext) {
-    pending_sends_[recipient_id] = plaintext;
-    KeyRequest kr;
-    kr.set_user_id(recipient_id);
-    send_envelope(MT_KEY_REQUEST, kr);
-    spdlog::debug("KEY_REQUEST sent for '{}', plaintext queued", recipient_id);
+    bool first_request = pending_sends_.find(recipient_id) == pending_sends_.end();
+    pending_sends_[recipient_id].push_back(plaintext);
+
+    if (first_request) {
+        // Only send KEY_REQUEST once per recipient (subsequent messages just queue)
+        KeyRequest kr;
+        kr.set_user_id(recipient_id);
+        send_envelope(MT_KEY_REQUEST, kr);
+        spdlog::debug("KEY_REQUEST sent for '{}', plaintext queued", recipient_id);
+
+        // Timeout: if KEY_BUNDLE doesn't arrive in 10s, notify user and clean up
+        std::thread([this, rid = recipient_id]() {
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            auto it = pending_sends_.find(rid);
+            if (it != pending_sends_.end()) {
+                int count = static_cast<int>(it->second.size());
+                pending_sends_.erase(it);
+                push_system("Could not establish session with " + rid +
+                            " (timeout) — " + std::to_string(count) + " message(s) dropped");
+                spdlog::warn("KEY_BUNDLE timeout for '{}', {} messages dropped", rid, count);
+            }
+        }).detach();
+    } else {
+        spdlog::debug("Additional plaintext queued for '{}' (waiting for KEY_BUNDLE)", recipient_id);
+    }
 }
 
 void MessageHandler::handle_presence(const Envelope& env) {

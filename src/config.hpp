@@ -14,6 +14,7 @@ struct ServerConfig {
 struct IdentityConfig {
     std::string user_id  = "user";
     std::string key_file;   // empty = default platform path
+    std::string password;   // for key recovery on identity key mismatch (optional)
 };
 
 struct UiConfig {
@@ -36,6 +37,10 @@ struct VoiceConfig {
     std::string mode          = "ptt";     // "ptt" or "vox"
     std::string ptt_key       = "F1";
     float       vad_threshold = 0.02f;
+    // ICE servers (STUN/TURN) — if empty, uses default Google STUN
+    std::vector<std::string> ice_servers;
+    std::string turn_username;
+    std::string turn_password;
 };
 
 struct PreviewConfig {

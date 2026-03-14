@@ -213,7 +213,22 @@ void SettingsScreen::build_ui() {
     cert_pin_input_ = Input(&tls_cert_pin_, "");
     keywords_input_ = Input(&mention_keywords_, "");
     nickname_input_ = Input(&nickname_, "");
-    
+
+    // Checkbox components (created once, not per-render)
+    show_timestamps_cb_ = Checkbox("Show timestamps", &show_timestamps_);
+    show_user_colors_cb_ = Checkbox("Colorize usernames", &show_user_colors_);
+    auto_reconnect_cb_ = Checkbox("Auto-reconnect on disconnect", &auto_reconnect_);
+    tls_verify_cb_ = Checkbox("Verify TLS certificates", &tls_verify_peer_);
+    desktop_notif_cb_ = Checkbox("Enable desktop notifications", &desktop_notifications_);
+    sound_alerts_cb_ = Checkbox("Enable sound alerts", &sound_alerts_);
+    mention_cb_ = Checkbox("Notify on mentions", &notify_on_mention_);
+    dm_cb_ = Checkbox("Notify on direct messages", &notify_on_dm_);
+
+    // Account action buttons (created once, not per-render)
+    export_button_persistent_ = Button("[ Export Settings ]", [this] { export_settings(); });
+    import_button_persistent_ = Button("[ Import Settings ]", [this] { import_settings(); });
+    logout_button_persistent_ = Button("[ LOGOUT ]", [this] { logout_ = true; });
+
     // Action buttons
     save_button_ = Button("[ SAVE ]", [this] {
         saved_ = true;
@@ -224,18 +239,29 @@ void SettingsScreen::build_ui() {
     reset_button_ = Button("[ Reset to Defaults ]", [this] {
         reset_to_defaults();
     });
-    
-    // Main container - vertical layout of sidebar and content containers
+
+    // Main container - all interactive components must be in the tree
     container_ = Container::Vertical({
         sidebar_container_,
         theme_input_,
         timestamp_format_input_,
         max_messages_input_,
+        show_timestamps_cb_,
+        show_user_colors_cb_,
         reconnect_delay_input_,
         timeout_input_,
+        auto_reconnect_cb_,
+        tls_verify_cb_,
         cert_pin_input_,
+        desktop_notif_cb_,
+        sound_alerts_cb_,
+        mention_cb_,
+        dm_cb_,
         keywords_input_,
         nickname_input_,
+        export_button_persistent_,
+        import_button_persistent_,
+        logout_button_persistent_,
         save_button_,
         cancel_button_,
         reset_button_,
@@ -256,9 +282,7 @@ Element SettingsScreen::render_appearance() {
         text(std::to_string(font_scale_) + "%") | color(palette::cyan()),
     });
     
-    // Display options
-    auto timestamp_checkbox = Checkbox("Show timestamps", &show_timestamps_);
-    auto user_colors_checkbox = Checkbox("Colorize usernames", &show_user_colors_);
+    // Display options (use persistent components)
     
     // Timestamp format
     auto format_row = hbox({
@@ -279,8 +303,8 @@ Element SettingsScreen::render_appearance() {
         text(""),
         text("Display Options") | bold | color(palette::blue()),
         separator(),
-        timestamp_checkbox->Render(),
-        user_colors_checkbox->Render(),
+        show_timestamps_cb_->Render(),
+        show_user_colors_cb_->Render(),
         format_row,
         max_msg_row,
         text(""),
@@ -290,8 +314,6 @@ Element SettingsScreen::render_appearance() {
 }
 
 Element SettingsScreen::render_connection() {
-    auto reconnect_checkbox = Checkbox("Auto-reconnect on disconnect", &auto_reconnect_);
-    
     auto delay_row = hbox({
         text("Reconnect Delay: ") | color(palette::fg_dark()),
         reconnect_delay_input_->Render() | size(WIDTH, GREATER_THAN, 5) | border,
@@ -304,8 +326,6 @@ Element SettingsScreen::render_connection() {
         text(" seconds") | color(palette::comment()),
     });
     
-    auto verify_checkbox = Checkbox("Verify TLS certificates", &tls_verify_peer_);
-    
     auto cert_pin_row = hbox({
         text("Certificate PIN: ") | color(palette::fg_dark()),
         cert_pin_input_->Render() | size(WIDTH, GREATER_THAN, 40) | border,
@@ -314,7 +334,7 @@ Element SettingsScreen::render_connection() {
     return vbox({
         text("Reconnect Behavior") | bold | color(palette::blue()),
         separator(),
-        reconnect_checkbox->Render(),
+        auto_reconnect_cb_->Render(),
         delay_row,
         text(""),
         text("Timeout Settings") | bold | color(palette::blue()),
@@ -323,7 +343,7 @@ Element SettingsScreen::render_connection() {
         text(""),
         text("TLS/SSL Options") | bold | color(palette::blue()),
         separator(),
-        verify_checkbox->Render(),
+        tls_verify_cb_->Render(),
         cert_pin_row,
         text(""),
         text("Note: Connection settings take effect on next connection.") 
@@ -332,11 +352,6 @@ Element SettingsScreen::render_connection() {
 }
 
 Element SettingsScreen::render_notifications() {
-    auto desktop_checkbox = Checkbox("Enable desktop notifications", &desktop_notifications_);
-    auto sound_checkbox = Checkbox("Enable sound alerts", &sound_alerts_);
-    auto mention_checkbox = Checkbox("Notify on mentions", &notify_on_mention_);
-    auto dm_checkbox = Checkbox("Notify on direct messages", &notify_on_dm_);
-    
     auto keywords_row = hbox({
         text("Mention Keywords: ") | color(palette::fg_dark()),
         keywords_input_->Render() | size(WIDTH, GREATER_THAN, 30) | border,
@@ -345,13 +360,13 @@ Element SettingsScreen::render_notifications() {
     return vbox({
         text("Notification Settings") | bold | color(palette::blue()),
         separator(),
-        desktop_checkbox->Render(),
-        sound_checkbox->Render(),
+        desktop_notif_cb_->Render(),
+        sound_alerts_cb_->Render(),
         text(""),
         text("Mention Settings") | bold | color(palette::blue()),
         separator(),
-        mention_checkbox->Render(),
-        dm_checkbox->Render(),
+        mention_cb_->Render(),
+        dm_cb_->Render(),
         keywords_row,
         text("  Comma-separated keywords (e.g.: nick1, nick2, word1)") | color(palette::comment()) | dim,
     });
@@ -375,15 +390,15 @@ Element SettingsScreen::render_account() {
     });
     
     auto import_export = hbox({
-        Button("[ Export Settings ]", [this] { export_settings(); })->Render(),
+        export_button_persistent_->Render(),
         text("  "),
-        Button("[ Import Settings ]", [this] { import_settings(); })->Render(),
+        import_button_persistent_->Render(),
     });
-    
+
     auto danger_zone = vbox({
         text("Danger Zone") | bold | color(palette::red()),
         separator(),
-        Button("[ LOGOUT ]", [this] { logout_ = true; })->Render() | color(palette::red()),
+        logout_button_persistent_->Render() | color(palette::red()),
     });
     
     return vbox({

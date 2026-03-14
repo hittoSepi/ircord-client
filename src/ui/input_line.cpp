@@ -98,6 +98,12 @@ void InputLine::set_text(const std::string& utf8) {
 std::string InputLine::text() const { return to_utf8(buf_); }
 int         InputLine::cursor_col() const { return static_cast<int>(cursor_); }
 
+int InputLine::cursor_byte_offset() const {
+    // Convert code point position to UTF-8 byte offset
+    auto prefix = buf_.substr(0, cursor_);
+    return static_cast<int>(to_utf8(prefix).size());
+}
+
 std::u32string InputLine::from_utf8(const std::string& s) {
     std::u32string out;
     out.reserve(s.size());

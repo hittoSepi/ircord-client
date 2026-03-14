@@ -15,7 +15,20 @@ VoiceEngine::~VoiceEngine() {
 
 rtc::Configuration VoiceEngine::make_rtc_config() {
     rtc::Configuration config;
-    config.iceServers.push_back({"stun:stun.l.google.com:19302"});
+    if (cfg_.voice.ice_servers.empty()) {
+        // Default STUN servers
+        config.iceServers.push_back({"stun:stun.l.google.com:19302"});
+        config.iceServers.push_back({"stun:stun1.l.google.com:19302"});
+    } else {
+        for (const auto& server : cfg_.voice.ice_servers) {
+            rtc::IceServer ice(server);
+            if (!cfg_.voice.turn_username.empty()) {
+                ice.username = cfg_.voice.turn_username;
+                ice.password = cfg_.voice.turn_password;
+            }
+            config.iceServers.push_back(std::move(ice));
+        }
+    }
     return config;
 }
 
@@ -38,9 +51,23 @@ void VoiceEngine::on_room_joined(const std::string& channel_id,
     muted_          = false;
     deafened_       = false;
 
-    audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
-        [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
-        [this](float* out, uint32_t frames)        { mix_output(out, frames); });
+    if (!audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
+            [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
+            [this](float* out, uint32_t frames)        { mix_output(out, frames); })) {
+        spdlog::error("Failed to open audio device for voice room");
+        state_.post_ui([this]() {
+            Message msg;
+            msg.type = Message::Type::System;
+            msg.sender_id = "voice";
+            msg.content = "Failed to open audio device. Check your audio settings.";
+            msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            auto ch = state_.active_channel().value_or("server");
+            state_.push_message(ch, std::move(msg));
+        });
+        in_voice_ = false;
+        return;
+    }
     audio_.start();
 
     // We are the joiner — create PeerConnections to all existing participants as offerer
@@ -107,9 +134,23 @@ void VoiceEngine::call(const std::string& peer_id) {
     in_voice_       = true;
     active_channel_ = peer_id;
 
-    audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
-        [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
-        [this](float* out, uint32_t frames)        { mix_output(out, frames); });
+    if (!audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
+            [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
+            [this](float* out, uint32_t frames)        { mix_output(out, frames); })) {
+        spdlog::error("Failed to open audio device for call");
+        state_.post_ui([this]() {
+            Message msg;
+            msg.type = Message::Type::System;
+            msg.sender_id = "voice";
+            msg.content = "Failed to open audio device. Check your audio settings.";
+            msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            auto ch = state_.active_channel().value_or("server");
+            state_.push_message(ch, std::move(msg));
+        });
+        in_voice_ = false;
+        return;
+    }
     audio_.start();
 
     // Create PeerConnection as offerer
@@ -129,9 +170,13 @@ void VoiceEngine::accept_call(const std::string& caller_id) {
     in_voice_       = true;
     active_channel_ = caller_id;
 
-    audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
-        [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
-        [this](float* out, uint32_t frames)        { mix_output(out, frames); });
+    if (!audio_.open(cfg_.voice.input_device, cfg_.voice.output_device,
+            [this](const float* pcm, uint32_t frames) { on_capture(pcm, frames); },
+            [this](float* out, uint32_t frames)        { mix_output(out, frames); })) {
+        spdlog::error("Failed to open audio device for call accept");
+        in_voice_ = false;
+        return;
+    }
     audio_.start();
 
     // Create PeerConnection as answerer
@@ -305,8 +350,20 @@ void VoiceEngine::setup_peer_callbacks(std::shared_ptr<PeerConn> peer) {
         if (state == rtc::PeerConnection::State::Connected) {
             spdlog::info("WebRTC connected to {}", peer_id);
             peer->connected = true;
-        } else if (state == rtc::PeerConnection::State::Failed ||
-                   state == rtc::PeerConnection::State::Disconnected) {
+        } else if (state == rtc::PeerConnection::State::Failed) {
+            spdlog::warn("WebRTC connection failed to {}", peer_id);
+            peer->connected = false;
+            state_.post_ui([this, peer_id]() {
+                Message msg;
+                msg.type = Message::Type::System;
+                msg.sender_id = "voice";
+                msg.content = "Voice connection to " + peer_id + " failed. Check your network/firewall.";
+                msg.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                auto ch = state_.active_channel().value_or("server");
+                state_.push_message(ch, std::move(msg));
+            });
+        } else if (state == rtc::PeerConnection::State::Disconnected) {
             spdlog::warn("WebRTC disconnected from {}", peer_id);
             peer->connected = false;
         }

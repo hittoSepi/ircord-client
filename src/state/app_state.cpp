@@ -124,6 +124,13 @@ int AppState::unread_count(const std::string& channel_id) const {
 void AppState::set_presence(const std::string& user_id, PresenceStatus status) {
     std::unique_lock lk(mu_);
     online_users_[user_id] = status;
+    // Sync presence into all channel user lists
+    for (auto& [ch_id, users] : channel_users_) {
+        auto it = users.find(user_id);
+        if (it != users.end()) {
+            it->second.presence = status;
+        }
+    }
 }
 
 PresenceStatus AppState::presence(const std::string& user_id) const {

@@ -357,11 +357,21 @@ void App::on_submit(const std::string& line) {
 
 void App::handle_command(const ParsedCommand& cmd) {
     if (cmd.name == "/quit" || cmd.name == "/exit") {
+        // Fully exit: disconnect from server + close UI
         ioc_.stop();
-        // Exit FTXUI loop — post from another thread
-        // UIManager will exit when on_quit callback fires; here we trigger it
-        // via a system message and let the user press Esc/Ctrl-C
-        ui_->push_system_msg("Goodbye.");
+        ui_->request_exit();
+        return;
+    }
+    if (cmd.name == "/disconnect") {
+        // Disconnect from server but stay in the UI
+        if (net_client_ && net_client_->is_connected()) {
+            ioc_.stop();
+            msg_handler_->on_transport_disconnected();
+            state_.set_connected(false);
+            ui_->push_system_msg("Disconnected from server.");
+        } else {
+            ui_->push_system_msg("Not connected.");
+        }
         return;
     }
     if (cmd.name == "/version") {
@@ -369,20 +379,80 @@ void App::handle_command(const ParsedCommand& cmd) {
         ui_->push_system_msg("Server version: " + server_version_);
         return;
     }
+    if (cmd.name == "/status") {
+        bool connected = net_client_ && net_client_->is_connected();
+        bool authed = msg_handler_ && msg_handler_->is_authenticated();
+        ui_->push_system_msg("Connection: " + std::string(connected ? "connected" : "disconnected"));
+        ui_->push_system_msg("Auth: " + std::string(authed ? "authenticated" : "not authenticated"));
+        ui_->push_system_msg("User: " + cfg_.identity.user_id);
+        ui_->push_system_msg("Active channel: " + state_.active_channel().value_or("(none)"));
+        return;
+    }
     if (cmd.name == "/settings") {
         open_settings();
         return;
     }
+    if (cmd.name == "/help") {
+        ui_->push_system_msg(
+            "Commands: /join /part /msg /me /call /accept /hangup /voice "
+            "/mute /deafen /ptt /trust /names /search /clear /settings /version /status /disconnect /quit");
+        ui_->push_system_msg(
+            "Shortcuts: F1=PTT toggle, F12=Settings, Alt+1-9=Switch channel, "
+            "Alt+Left/Right=Previous/next channel, Esc=Quit");
+        ui_->notify();
+        return;
+    }
+    if (cmd.name == "/clear") {
+        ui_->push_system_msg("(cleared)");
+        ui_->notify();
+        return;
+    }
+    if (cmd.name == "/names") {
+        auto users = state_.online_users();
+        std::string list;
+        for (auto& u : users) list += u + " ";
+        ui_->push_system_msg("Online: " + (list.empty() ? "(none)" : list));
+        ui_->notify();
+        return;
+    }
+    if (cmd.name == "/search" && !cmd.args.empty()) {
+        std::string query;
+        for (size_t i = 0; i < cmd.args.size(); ++i) {
+            if (i > 0) query += " ";
+            query += cmd.args[i];
+        }
+        if (store_) {
+            db::LocalStore::SearchFilters filters;
+            filters.limit = 20;
+            auto results = store_->search_messages(query, filters);
+            ui_->push_system_msg("Search results for '" + query + "':");
+            if (results.empty()) {
+                ui_->push_system_msg("  (no results)");
+            } else {
+                for (const auto& r : results) {
+                    std::string preview = r.content;
+                    if (preview.length() > 60) preview = preview.substr(0, 57) + "...";
+                    ui_->push_system_msg("  [" + r.channel_id + "] <" + r.sender_id + ">: " + preview);
+                }
+            }
+        } else {
+            ui_->push_system_msg("Search not available (no database).");
+        }
+        ui_->notify();
+        return;
+    }
+
+    // All remaining commands require server connection + authentication
+    if (!msg_handler_ || !msg_handler_->is_authenticated()) {
+        ui_->push_system_msg("Not connected. Use /status to check connection state.");
+        ui_->notify();
+        return;
+    }
+
     if (cmd.name == "/part") {
         auto ch = state_.active_channel().value_or("");
         if (ch.empty() || is_server_channel(ch)) {
             ui_->push_system_msg("Cannot leave the server channel.");
-        } else if (!msg_handler_->is_authenticated()) {
-            log_server_event(
-                (net_client_->is_connected()
-                     ? "part blocked: authentication still in progress for "
-                     : "part blocked: not connected for ") + ch,
-                true);
         } else {
             {
                 std::lock_guard lk(pending_command_mu_);
@@ -404,15 +474,6 @@ void App::handle_command(const ParsedCommand& cmd) {
         }
         if (is_server_channel(*target)) {
             ui_->push_system_msg("`server` is a reserved internal tab.");
-            return;
-        }
-        if (!msg_handler_->is_authenticated()) {
-            log_server_event(
-                (net_client_->is_connected()
-                     ? "join blocked: authentication still in progress for "
-                     : "join blocked: not connected for ") + *target,
-                true);
-            ui_->notify();
             return;
         }
         {
@@ -501,45 +562,6 @@ void App::handle_command(const ParsedCommand& cmd) {
             std::chrono::system_clock::now().time_since_epoch()).count();
         state_.push_message(ch, std::move(action_msg));
         ui_->notify();
-    } else if (cmd.name == "/names") {
-        auto users = state_.online_users();
-        std::string list;
-        for (auto& u : users) list += u + " ";
-        ui_->push_system_msg("Online: " + (list.empty() ? "(none)" : list));
-    } else if (cmd.name == "/search" && !cmd.args.empty()) {
-        // Join all args into query string
-        std::string query;
-        for (size_t i = 0; i < cmd.args.size(); ++i) {
-            if (i > 0) query += " ";
-            query += cmd.args[i];
-        }
-        if (store_) {
-            db::LocalStore::SearchFilters filters;
-            filters.limit = 20;
-            auto results = store_->search_messages(query, filters);
-            ui_->push_system_msg("Search results for '" + query + "':");
-            if (results.empty()) {
-                ui_->push_system_msg("  (no results)");
-            } else {
-                for (const auto& r : results) {
-                    std::string preview = r.content;
-                    if (preview.length() > 60) preview = preview.substr(0, 57) + "...";
-                    // Format: [channel] <sender>: content
-                    ui_->push_system_msg("  [" + r.channel_id + "] <" + r.sender_id + ">: " + preview);
-                }
-            }
-        } else {
-            ui_->push_system_msg("Search not available (no database).");
-        }
-    } else if (cmd.name == "/clear") {
-        ui_->push_system_msg("(cleared)");
-    } else if (cmd.name == "/help") {
-        ui_->push_system_msg(
-            "Commands: /join /part /msg /me /call /accept /hangup /voice "
-            "/mute /deafen /ptt /trust /names /search /clear /settings /version /quit");
-        ui_->push_system_msg(
-            "Shortcuts: F1=PTT toggle, F12=Settings, Alt+1-9=Switch channel, "
-            "Alt+Left/Right=Previous/next channel, Esc=Quit");
     } else {
         ui_->push_system_msg("Unknown command: " + cmd.name);
     }
@@ -674,9 +696,16 @@ void App::trace_connection_phase(const std::string& phase,
 
 void App::handle_command_response(const CommandResponse& response) {
     const std::string command = ascii_lower_copy(response.command());
-    log_server_event(
-        std::string(response.success() ? "[ok] " : "[fail] ") + command + ": " + response.message(),
-        false);
+    std::string prefix = response.success() ? "[ok] " : "[fail] ";
+    log_server_event(prefix + command + ": " + response.message(), false);
+
+    // Show failed commands also in the active channel for visibility
+    if (!response.success()) {
+        auto active = state_.active_channel().value_or("");
+        if (!active.empty() && active != "server") {
+            log_system_message(active, prefix + command + ": " + response.message(), false);
+        }
+    }
 
     if (command == "join") {
         std::optional<std::string> target;

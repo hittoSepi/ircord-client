@@ -33,8 +33,11 @@ public:
     // Return current buffer as UTF-8 string (for display and send)
     std::string text() const;
 
-    // Return cursor position in display columns (naive: 1 column per char)
+    // Return cursor position in code points
     int cursor_col() const;
+
+    // Return cursor position as UTF-8 byte offset in text()
+    int cursor_byte_offset() const;
 
     // Commit current line to history and clear buffer. Returns the committed line.
     std::string commit();

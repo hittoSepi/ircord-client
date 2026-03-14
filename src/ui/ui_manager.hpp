@@ -53,6 +53,9 @@ public:
     // Called internally by AppState::post_ui() wiring.
     void notify();
 
+    // Request the FTXUI event loop to exit (for /quit).
+    void request_exit();
+
     InputLine& input_line() { return input_line_; }
 
     // Set PTT active state for hold-to-talk (call with false on key release)

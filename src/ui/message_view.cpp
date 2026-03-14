@@ -31,14 +31,14 @@ static Element render_one(const Message& msg, const std::string& ts_fmt) {
     if (msg.type == Message::Type::System || msg.type == Message::Type::VoiceEvent) {
         return hbox({
             ts_el,
-            text("* " + msg.content) | color(palette::yellow()),
+            paragraph("* " + msg.content) | color(palette::yellow()) | flex,
         });
     }
 
     return hbox({
         ts_el,
         text("<" + msg.sender_id + "> ") | ftxui::color(nick_color(msg.sender_id)),
-        text(msg.content) | color(palette::fg()),
+        paragraph(msg.content) | color(palette::fg()) | flex,
     });
 }
 

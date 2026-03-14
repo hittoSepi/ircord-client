@@ -8,7 +8,9 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 // Forward declarations
 namespace ircord::crypto { class CryptoEngine; }
@@ -91,7 +93,8 @@ private:
     uint64_t next_seq_    = 1;
 
     // Pending KEY_REQUEST recipients (to flush when KEY_BUNDLE arrives)
-    std::unordered_map<std::string, std::string> pending_sends_;
+    // Stores multiple queued plaintexts per recipient
+    std::unordered_map<std::string, std::vector<std::string>> pending_sends_;
 };
 
 } // namespace ircord::net

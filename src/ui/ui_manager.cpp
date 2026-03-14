@@ -8,6 +8,7 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/dom/flexbox_config.hpp>
 #include <chrono>
 #include <algorithm>
 #include <cstdlib>
@@ -117,6 +118,36 @@ bool UIManager::handle_mouse_event(const Event& event) {
             return true;
         }
         if (mouse_tracker_.is_selecting()) {
+            // Copy selected messages to clipboard on mouse release
+            auto sel = mouse_tracker_.selection_region();
+            if (sel.height > 0 && mouse_tracker_.is_over_message_area()) {
+                auto ch = state_.active_channel();
+                if (ch) {
+                    auto ch_state = state_.channel_snapshot(*ch);
+                    int total = static_cast<int>(ch_state.messages.size());
+                    if (total > 0) {
+                        int visible_rows = mouse_tracker_.message_region().height;
+                        int bottom_idx = total - 1 - ch_state.scroll_offset;
+                        bottom_idx = std::clamp(bottom_idx, 0, total - 1);
+                        int top_idx = std::max(0, bottom_idx - visible_rows + 1);
+
+                        int sel_start = std::max(top_idx, top_idx + sel.y - mouse_tracker_.message_region().y);
+                        int sel_end = std::min(bottom_idx, sel_start + sel.height - 1);
+
+                        std::string selected;
+                        for (int i = sel_start; i <= sel_end; ++i) {
+                            if (i < total) {
+                                if (!selected.empty()) selected += '\n';
+                                const auto& msg = ch_state.messages[i];
+                                selected += "<" + msg.sender_id + "> " + msg.content;
+                            }
+                        }
+                        if (!selected.empty()) {
+                            copy_to_clipboard(selected);
+                        }
+                    }
+                }
+            }
             mouse_tracker_.end_selection();
             return true;
         }
@@ -361,6 +392,10 @@ void UIManager::notify() {
     screen_.PostEvent(Event::Custom);
 }
 
+void UIManager::request_exit() {
+    screen_.ExitLoopClosure()();
+}
+
 void UIManager::push_system_msg(const std::string& txt) {
     auto ch = state_.active_channel().value_or("server");
     push_system_msg_to_channel(ch, txt, false);
@@ -453,7 +488,10 @@ Element UIManager::build_document(int term_rows) {
     // Update region tracking for mouse hit testing
     mouse_tracker_.set_tab_bar_region({0, 0, kTabBarHeight, term_cols});
     
-    int msg_rows = std::max(1, term_rows - kTabBarHeight - kStatusBarHeight - kInputLineHeight - 2);  // -2 for separators
+    // Dynamic input height based on text length
+    int input_text_display_len = static_cast<int>(input_line_.text().size()) + 2; // +2 for "> "
+    int input_lines = std::max(1, std::min(5, (input_text_display_len + term_cols - 1) / std::max(1, term_cols)));
+    int msg_rows = std::max(1, term_rows - kTabBarHeight - kStatusBarHeight - input_lines - 2);  // -2 for separators
     int msg_y = kTabBarHeight + 1;  // After tab bar and separator
     
     int status_y = msg_y + msg_rows + 1;
@@ -461,7 +499,7 @@ Element UIManager::build_document(int term_rows) {
     
     mouse_tracker_.set_message_region({msg_y, 0, msg_rows, term_cols});
     mouse_tracker_.set_status_bar_region({status_y, 0, kStatusBarHeight, term_cols});
-    mouse_tracker_.set_input_region({input_y, 0, kInputLineHeight, term_cols});
+    mouse_tracker_.set_input_region({input_y, 0, input_lines, term_cols});
     
     // Panels
     auto channels  = state_.channel_list();
@@ -493,20 +531,31 @@ Element UIManager::build_document(int term_rows) {
     auto status_el = render_status_bar(si);
 
     // Input line
-    std::string display = "> " + input_line_.text();
-    // Show block cursor
-    int cur = input_line_.cursor_col();
-    std::string before = "> " + input_line_.text().substr(0, cur);
-    std::string at     = (cur < static_cast<int>(input_line_.text().size()))
-                         ? input_line_.text().substr(cur, 1) : " ";
-    std::string after  = (cur < static_cast<int>(input_line_.text().size()))
-                         ? input_line_.text().substr(cur + 1) : "";
+    std::string input_text = input_line_.text();
+    // Show block cursor — use byte offset for correct UTF-8 splitting
+    int byte_off = input_line_.cursor_byte_offset();
+    std::string before = "> " + input_text.substr(0, byte_off);
+    // Find the byte length of the code point at cursor
+    std::string at, after;
+    if (byte_off < static_cast<int>(input_text.size())) {
+        unsigned char lead = static_cast<unsigned char>(input_text[byte_off]);
+        int cp_len = 1;
+        if ((lead & 0xE0) == 0xC0) cp_len = 2;
+        else if ((lead & 0xF0) == 0xE0) cp_len = 3;
+        else if ((lead & 0xF8) == 0xF0) cp_len = 4;
+        at    = input_text.substr(byte_off, cp_len);
+        after = input_text.substr(byte_off + cp_len);
+    } else {
+        at    = " ";
+        after = "";
+    }
 
-    auto input_el = hbox({
+    auto input_el = flexbox({
         text(before) | color(palette::fg()),
         text(at)     | color(palette::bg()) | bgcolor(palette::fg()),
         text(after)  | color(palette::fg()),
-    }) | bgcolor(palette::bg());
+    }, FlexboxConfig().Set(FlexboxConfig::Wrap::Wrap))
+    | bgcolor(palette::bg()) | size(HEIGHT, LESS_THAN, input_lines + 1);
 
     return vbox({
         tab_el,

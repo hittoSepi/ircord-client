@@ -116,6 +116,21 @@ private:
     ftxui::Component cert_pin_input_;
     ftxui::Component keywords_input_;
     ftxui::Component nickname_input_;
+
+    // Checkbox components (must persist across renders)
+    ftxui::Component show_timestamps_cb_;
+    ftxui::Component show_user_colors_cb_;
+    ftxui::Component auto_reconnect_cb_;
+    ftxui::Component tls_verify_cb_;
+    ftxui::Component desktop_notif_cb_;
+    ftxui::Component sound_alerts_cb_;
+    ftxui::Component mention_cb_;
+    ftxui::Component dm_cb_;
+
+    // Account action buttons (must persist across renders)
+    ftxui::Component export_button_persistent_;
+    ftxui::Component import_button_persistent_;
+    ftxui::Component logout_button_persistent_;
 };
 
 // Get available theme names
