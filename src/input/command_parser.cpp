@@ -9,7 +9,7 @@ static const std::vector<std::string> kKnownCommands = {
     "/voice", "/mute", "/deafen", "/ptt",
     "/trust", "/safety",
     "/set", "/clear", "/search",
-    "/quit", "/disconnect", "/status", "/help", "/settings", "/version",
+    "/quit", "/disconnect", "/status", "/help", "/reload_help", "/settings", "/version",
     "/names", "/whois",
     "/upload", "/download",
 };

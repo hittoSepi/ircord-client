@@ -234,6 +234,19 @@ bool App::init(const std::filesystem::path& config_path,
     // ── Voice ─────────────────────────────────────────────────────────────
     voice_ = std::make_unique<voice::VoiceEngine>(state_, cfg_);
 
+    // ── Help system ───────────────────────────────────────────────────────
+    {
+        std::error_code ec;
+        auto bin_dir = std::filesystem::canonical(
+            std::filesystem::path(config_path_).parent_path(), ec);
+        if (!ec) {
+            help_ = std::make_unique<HelpManager>(bin_dir);
+            help_->load();
+        } else {
+            spdlog::warn("Could not resolve binary directory for help system: {}", ec.message());
+        }
+    }
+
     // ── Link Previewer ────────────────────────────────────────────────────
     if (cfg_.preview.enabled) {
         previewer_ = std::make_unique<LinkPreviewer>(
@@ -393,12 +406,43 @@ void App::handle_command(const ParsedCommand& cmd) {
         return;
     }
     if (cmd.name == "/help") {
-        ui_->push_system_msg(
-            "Commands: /join /part /msg /me /call /accept /hangup /voice "
-            "/mute /deafen /ptt /trust /names /search /clear /settings /version /status /disconnect /quit");
-        ui_->push_system_msg(
-            "Shortcuts: F1=PTT toggle, F12=Settings, Alt+1-9=Switch channel, "
-            "Alt+Left/Right=Previous/next channel, Esc=Quit");
+        if (cmd.args.empty()) {
+            auto content = help_ ? help_->get("help") : std::nullopt;
+            if (content) {
+                ui_->push_system_msg(*content);
+            } else {
+                // Fallback if help.md not found
+                auto topics = help_ ? help_->topics() : std::vector<std::string>{};
+                std::string list;
+                for (auto& t : topics) { list += t + " "; }
+                ui_->push_system_msg("Usage: /help <topic>");
+                if (!list.empty())
+                    ui_->push_system_msg("Available topics: " + list);
+            }
+        } else {
+            std::string topic = cmd.args[0];
+            auto content = help_ ? help_->get(topic) : std::nullopt;
+            if (content) {
+                ui_->push_system_msg(*content);
+            } else {
+                ui_->push_system_msg("Topic '" + topic + "' not found.");
+                auto topics = help_ ? help_->topics() : std::vector<std::string>{};
+                std::string list;
+                for (auto& t : topics) { list += t + " "; }
+                if (!list.empty())
+                    ui_->push_system_msg("Available topics: " + list);
+            }
+        }
+        ui_->notify();
+        return;
+    }
+    if (cmd.name == "/reload_help") {
+        if (help_) {
+            help_->reload();
+            ui_->push_system_msg("Help files reloaded.");
+        } else {
+            ui_->push_system_msg("Help system not initialized.");
+        }
         ui_->notify();
         return;
     }

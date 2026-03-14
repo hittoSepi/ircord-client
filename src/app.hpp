@@ -10,6 +10,7 @@
 #include "preview/link_previewer.hpp"
 #include "db/local_store.hpp"
 #include "input/command_parser.hpp"
+#include "help/help_manager.hpp"
 
 #include <boost/asio/io_context.hpp>
 #include <chrono>
@@ -78,6 +79,7 @@ private:
     std::unique_ptr<crypto::CryptoEngine>   crypto_;
     std::unique_ptr<voice::VoiceEngine>     voice_;
     std::unique_ptr<LinkPreviewer>          previewer_;
+    std::unique_ptr<HelpManager>            help_;
 
     boost::asio::io_context                 ioc_;
     std::shared_ptr<net::NetClient>         net_client_;
