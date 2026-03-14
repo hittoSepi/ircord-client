@@ -255,3 +255,30 @@ add_custom_command(TARGET ircord-client POST_BUILD
 endif()
 
 enable_testing()
+
+set(RELEASE_ARCHIVE_NAME "${PROJECT_NAME}-latest.zip" CACHE STRING "Release archive file name")
+set(RELEASE_ARCHIVE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/release" CACHE PATH "Directory where the release zip is generated")
+add_release_zip_target(ircord-client
+    ARCHIVE_NAME "${RELEASE_ARCHIVE_NAME}"
+    OUTPUT_DIR "${RELEASE_ARCHIVE_OUTPUT_DIR}"
+    EXTRA_FILES README.md client.toml
+)
+
+set(RELEASE_UPLOAD_HOST "" CACHE STRING "SSH host for release upload (e.g. example.com)")
+set(RELEASE_UPLOAD_REMOTE_PATH "" CACHE STRING "Remote path where release archive is copied")
+set(RELEASE_UPLOAD_USER "" CACHE STRING "Optional SSH username")
+set(RELEASE_UPLOAD_PORT "" CACHE STRING "Optional SSH port")
+set(RELEASE_UPLOAD_IDENTITY_FILE "" CACHE FILEPATH "Optional SSH identity key file")
+
+if(RELEASE_UPLOAD_HOST AND RELEASE_UPLOAD_REMOTE_PATH)
+    set(_release_archive_path "${RELEASE_ARCHIVE_OUTPUT_DIR}/${RELEASE_ARCHIVE_NAME}")
+    add_ssh_upload_target(upload-release
+        FILE "${_release_archive_path}"
+        HOST "${RELEASE_UPLOAD_HOST}"
+        REMOTE_PATH "${RELEASE_UPLOAD_REMOTE_PATH}"
+        USER "${RELEASE_UPLOAD_USER}"
+        PORT "${RELEASE_UPLOAD_PORT}"
+        IDENTITY_FILE "${RELEASE_UPLOAD_IDENTITY_FILE}"
+        DEPENDS ircord-client_release_zip
+    )
+endif()
