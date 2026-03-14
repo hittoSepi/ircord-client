@@ -199,6 +199,7 @@ set(CLIENT_SOURCES
     src/input/input_handler.cpp
     src/input/command_parser.cpp
     src/input/tab_complete.cpp
+    src/help/help_manager.cpp
     ${PROTO_SRCS}
 )
 
