@@ -5,6 +5,7 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace ircord::ui {
@@ -34,7 +35,8 @@ public:
     // Pre-fills with any existing config values.
     LoginResult show(const ClientConfig& existing_cfg,
                      ftxui::ScreenInteractive& screen,
-                     LoginCredentials& out_creds);
+                     LoginCredentials& out_creds,
+                     const std::optional<LoginCredentials>& prefill = std::nullopt);
 
     // Set an error message to display (call from connection callback)
     void set_error(const std::string& error);

@@ -101,6 +101,9 @@ std::string ascii_lower_copy(std::string text) {
 App::App() = default;
 
 App::~App() {
+    if (ui_) {
+        save_current_config();
+    }
     ioc_.stop();
     if (io_thread_.joinable()) io_thread_.join();
     if (previewer_) previewer_->stop();
@@ -133,19 +136,20 @@ bool App::init(const std::filesystem::path& config_path,
     // ── Login Screen (FTXUI) ──────────────────────────────────────────────
     // Show the graphical login screen to get credentials
     ui::LoginCredentials login_creds;
-    
-    // Pre-fill server info if provided via ircord:// URL
+    std::optional<ui::LoginCredentials> login_prefill;
     if (server_url) {
-        login_creds.host = server_url->first;
-        login_creds.port = server_url->second;
-        spdlog::info("Pre-filled server from URL: {}:{}", login_creds.host, login_creds.port);
+        ui::LoginCredentials prefill;
+        prefill.host = server_url->first;
+        prefill.port = server_url->second;
+        login_prefill = prefill;
+        spdlog::info("Pre-filled server from URL: {}:{}", prefill.host, prefill.port);
     }
     
     {
         ui::LoginScreen login_screen;
         ftxui::ScreenInteractive screen = ftxui::ScreenInteractive::Fullscreen();
         
-        auto result = login_screen.show(cfg_, screen, login_creds);
+        auto result = login_screen.show(cfg_, screen, login_creds, login_prefill);
         
         if (result == ui::LoginResult::Cancelled) {
             spdlog::info("Login cancelled by user");

@@ -13,6 +13,16 @@ void InputLine::insert(char32_t ch) {
     hist_pos_ = -1; // editing breaks history browse
 }
 
+void InputLine::insert_text(const std::string& utf8) {
+    auto decoded = from_utf8(utf8);
+    if (decoded.empty()) return;
+
+    buf_.insert(buf_.begin() + static_cast<std::ptrdiff_t>(cursor_),
+                decoded.begin(), decoded.end());
+    cursor_ += decoded.size();
+    hist_pos_ = -1;
+}
+
 void InputLine::backspace() {
     if (cursor_ == 0) return;
     buf_.erase(cursor_ - 1, 1);
@@ -80,27 +90,65 @@ void InputLine::clear() {
 }
 
 void InputLine::set_text(const std::string& utf8) {
-    buf_.clear();
-    size_t i = 0;
-    while (i < utf8.size()) {
-        unsigned char c = static_cast<unsigned char>(utf8[i]);
-        char32_t cp = 0;
-        size_t bytes = 0;
-        if      (c < 0x80) { cp = c;        bytes = 1; }
-        else if (c < 0xE0) { cp = c & 0x1F; bytes = 2; }
-        else if (c < 0xF0) { cp = c & 0x0F; bytes = 3; }
-        else               { cp = c & 0x07; bytes = 4; }
-        for (size_t b = 1; b < bytes && i + b < utf8.size(); ++b)
-            cp = (cp << 6) | (static_cast<unsigned char>(utf8[i + b]) & 0x3F);
-        buf_.push_back(cp);
-        i += bytes;
-    }
+    buf_ = from_utf8(utf8);
     cursor_   = buf_.size();
     hist_pos_ = -1;
 }
 
 std::string InputLine::text() const { return to_utf8(buf_); }
 int         InputLine::cursor_col() const { return static_cast<int>(cursor_); }
+
+std::u32string InputLine::from_utf8(const std::string& s) {
+    std::u32string out;
+    out.reserve(s.size());
+
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        char32_t cp = 0;
+        size_t bytes = 0;
+
+        if (c < 0x80) {
+            cp = c;
+            bytes = 1;
+        } else if ((c & 0xE0) == 0xC0 && i + 1 < s.size()) {
+            cp = c & 0x1F;
+            bytes = 2;
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < s.size()) {
+            cp = c & 0x0F;
+            bytes = 3;
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < s.size()) {
+            cp = c & 0x07;
+            bytes = 4;
+        } else {
+            ++i;
+            continue;
+        }
+
+        bool valid = true;
+        for (size_t b = 1; b < bytes; ++b) {
+            unsigned char next = static_cast<unsigned char>(s[i + b]);
+            if ((next & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+            cp = (cp << 6) | (next & 0x3F);
+        }
+        if (!valid) {
+            ++i;
+            continue;
+        }
+
+        i += bytes;
+
+        if (cp == U'\r' || cp == U'\n') continue;
+        if (cp == U'\t') cp = U' ';
+        if (cp < 32 || cp == 127) continue;
+
+        out.push_back(cp);
+    }
+
+    return out;
+}
 
 std::string InputLine::to_utf8(const std::u32string& s) {
     std::string out;

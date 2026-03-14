@@ -26,7 +26,7 @@ using namespace ftxui;
 
 namespace ircord::ui {
 
-UIManager::UIManager(AppState& state, const ClientConfig& cfg)
+UIManager::UIManager(AppState& state, ClientConfig& cfg)
     : state_(state), cfg_(cfg) {
     // Initialize user list panel config from persisted settings
     user_list_config_.width = cfg.ui.user_list_width;
@@ -164,9 +164,7 @@ void UIManager::handle_click(int mouse_x, int mouse_y, bool is_right_click) {
         if (user) {
             // Left or right click on user - mention them
             std::string mention = "@" + *user + " ";
-            for (char c : mention) {
-                input_line_.insert(static_cast<char32_t>(c));
-            }
+            input_line_.insert_text(mention);
         }
         return;
     }
@@ -547,6 +545,13 @@ void UIManager::run(SubmitFn on_submit,
             // Posted by notify() — just triggers a redraw
             return true;
         }
+        if (event.input() == "\x16") {
+            if (auto clipboard = read_from_clipboard()) {
+                tab_completer_.reset();
+                input_line_.insert_text(*clipboard);
+            }
+            return true;
+        }
         if (event.input() == "\x03" || event.input() == "\x04") {
             return true;
         }
@@ -625,16 +630,11 @@ void UIManager::run(SubmitFn on_submit,
             return true;
         }
         if (event.is_character()) {
-            // Normal printable character
-            std::string ch = event.character();
-            if (!ch.empty()) {
-                // Decode first UTF-8 codepoint
-                uint32_t cp = static_cast<unsigned char>(ch[0]);
-                if (cp >= 32) {
-                    tab_completer_.reset();
-                    input_line_.insert(static_cast<char32_t>(cp));
-                    return true;
-                }
+            std::string text = event.character();
+            if (!text.empty()) {
+                tab_completer_.reset();
+                input_line_.insert_text(text);
+                return true;
             }
         }
         // Tab completion

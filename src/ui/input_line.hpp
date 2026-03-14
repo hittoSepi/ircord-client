@@ -12,6 +12,7 @@ public:
 
     // Insert a Unicode code point at the cursor position
     void insert(char32_t ch);
+    void insert_text(const std::string& utf8);
 
     // Delete character before cursor (backspace)
     void backspace();
@@ -58,7 +59,7 @@ private:
 
     // Convert u32string to UTF-8
     static std::string to_utf8(const std::u32string& s);
-    static char32_t    from_utf8_first(const std::string& s);
+    static std::u32string from_utf8(const std::string& s);
 };
 
 } // namespace ircord::ui

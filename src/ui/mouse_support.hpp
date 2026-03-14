@@ -178,6 +178,7 @@ private:
 
 // Clipboard utility
 void copy_to_clipboard(const std::string& text);
+std::optional<std::string> read_from_clipboard();
 
 // Link detection and opening
 bool is_url(const std::string& text);

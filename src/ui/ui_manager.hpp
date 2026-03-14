@@ -30,7 +30,7 @@ using ChannelCycleFn = std::function<void(int)>;
 // Call run() from the main thread — it blocks until the user quits.
 class UIManager {
 public:
-    UIManager(AppState& state, const ClientConfig& cfg);
+    UIManager(AppState& state, ClientConfig& cfg);
 
     // Build the component tree and run the FTXUI event loop (blocks).
     // on_channel_switch(i): called with 0-based index when user presses Alt+1..9.
@@ -89,7 +89,7 @@ private:
     ftxui::Element build_main_content(const std::string& active_ch, int msg_rows, int term_cols);
 
     AppState&           state_;
-    ClientConfig        cfg_;  // Mutable copy for persisting panel width
+    ClientConfig&       cfg_;
     InputLine           input_line_;
     TabCompleter        tab_completer_;
 

@@ -1,7 +1,9 @@
 #include "ui/mouse_support.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <regex>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -14,6 +16,69 @@
 #endif
 
 namespace ircord::ui {
+
+namespace {
+
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
+std::optional<std::string> read_pipe_output(const char* command) {
+    FILE* pipe = popen(command, "r");
+    if (!pipe) {
+        return std::nullopt;
+    }
+
+    std::string output;
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        output += buffer;
+    }
+
+    pclose(pipe);
+    if (output.empty()) {
+        return std::nullopt;
+    }
+    return output;
+}
+
+#ifdef _WIN32
+std::wstring utf8_to_utf16(const std::string& text) {
+    if (text.empty()) {
+        return {};
+    }
+
+    int wide_len = MultiByteToWideChar(CP_UTF8, 0, text.data(),
+                                       static_cast<int>(text.size()), nullptr, 0);
+    if (wide_len <= 0) {
+        return {};
+    }
+
+    std::wstring wide(static_cast<size_t>(wide_len), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                        wide.data(), wide_len);
+    return wide;
+}
+
+std::string utf16_to_utf8(const wchar_t* text) {
+    if (!text || *text == L'\0') {
+        return {};
+    }
+
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (utf8_len <= 1) {
+        return {};
+    }
+
+    std::string utf8(static_cast<size_t>(utf8_len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8.data(), utf8_len, nullptr, nullptr);
+    utf8.pop_back();
+    return utf8;
+}
+#endif
+
+} // namespace
 
 // ============================================================================
 // MouseTracker Implementation
@@ -97,23 +162,27 @@ UIRegion MouseTracker::selection_region() const {
 
 void copy_to_clipboard(const std::string& text) {
 #ifdef _WIN32
-    // Windows clipboard
     if (!OpenClipboard(nullptr)) return;
-    
+
     EmptyClipboard();
-    
-    // Allocate global memory for the text
-    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
+
+    std::wstring wide = utf8_to_utf16(text);
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE,
+        (wide.size() + 1) * sizeof(wchar_t));
     if (hMem) {
-        char* pMem = static_cast<char*>(GlobalLock(hMem));
+        auto* pMem = static_cast<wchar_t*>(GlobalLock(hMem));
         if (pMem) {
-            std::copy(text.begin(), text.end(), pMem);
-            pMem[text.size()] = '\0';
+            std::copy(wide.begin(), wide.end(), pMem);
+            pMem[wide.size()] = L'\0';
             GlobalUnlock(hMem);
-            SetClipboardData(CF_TEXT, hMem);
+            if (!SetClipboardData(CF_UNICODETEXT, hMem)) {
+                GlobalFree(hMem);
+            }
+        } else {
+            GlobalFree(hMem);
         }
     }
-    
+
     CloseClipboard();
 #elif __APPLE__
     // macOS - use pbcopy
@@ -129,6 +198,38 @@ void copy_to_clipboard(const std::string& text) {
         fwrite(text.c_str(), 1, text.size(), pipe);
         pclose(pipe);
     }
+#endif
+}
+
+std::optional<std::string> read_from_clipboard() {
+#ifdef _WIN32
+    if (!OpenClipboard(nullptr)) {
+        return std::nullopt;
+    }
+
+    std::optional<std::string> result;
+
+    if (HANDLE handle = GetClipboardData(CF_UNICODETEXT)) {
+        if (auto* text = static_cast<const wchar_t*>(GlobalLock(handle))) {
+            result = utf16_to_utf8(text);
+            GlobalUnlock(handle);
+        }
+    } else if (HANDLE handle = GetClipboardData(CF_TEXT)) {
+        if (auto* text = static_cast<const char*>(GlobalLock(handle))) {
+            result = std::string(text);
+            GlobalUnlock(handle);
+        }
+    }
+
+    CloseClipboard();
+    return result;
+#elif __APPLE__
+    return read_pipe_output("pbpaste");
+#else
+    if (auto text = read_pipe_output("wl-paste -n 2>/dev/null")) {
+        return text;
+    }
+    return read_pipe_output("xclip -selection clipboard -o 2>/dev/null");
 #endif
 }
 

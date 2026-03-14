@@ -255,6 +255,16 @@ add_custom_command(TARGET ircord-client POST_BUILD
 
 enable_testing()
 
+add_executable(test-input-line
+    tests/test_input_line.cpp
+    src/ui/input_line.cpp
+)
+target_include_directories(test-input-line PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(test-input-line PRIVATE Catch2::Catch2WithMain)
+add_test(NAME input-line-tests COMMAND test-input-line)
+
 set(RELEASE_ARCHIVE_NAME "${PROJECT_NAME}-latest.zip" CACHE STRING "Release archive file name")
 set(RELEASE_ARCHIVE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/release" CACHE PATH "Directory where the release zip is generated")
 add_release_zip_target(ircord-client

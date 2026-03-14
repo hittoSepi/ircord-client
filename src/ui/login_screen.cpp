@@ -75,7 +75,8 @@ LoginScreen::LoginScreen() = default;
 
 LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
                               ftxui::ScreenInteractive& screen,
-                              LoginCredentials& out_creds) {
+                              LoginCredentials& out_creds,
+                              const std::optional<LoginCredentials>& prefill) {
     submitted_ = false;
     cancelled_ = false;
     is_loading_ = false;
@@ -126,6 +127,22 @@ LoginResult LoginScreen::show(const ClientConfig& existing_cfg,
         }
     } catch (...) {
         // Ignore load errors
+    }
+
+    if (prefill) {
+        if (!prefill->host.empty()) {
+            host_ = prefill->host;
+        }
+        if (prefill->port != 0) {
+            port_str_ = std::to_string(prefill->port);
+        }
+        if (!prefill->username.empty()) {
+            username_ = prefill->username;
+        }
+        if (!prefill->passkey.empty()) {
+            passkey_ = prefill->passkey;
+        }
+        remember_ = remember_ || prefill->remember;
     }
 
     // Get exit closure before building UI

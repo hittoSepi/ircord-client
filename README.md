@@ -22,6 +22,11 @@ End-to-end encrypted chat and voice for friend groups. Terminal UI with irssi-st
 
 > **Keep your passphrase safe.** It encrypts your identity key. Losing it means losing access to your account.
 
+You can also launch directly with an `ircord://` quick-connect URL:
+```text
+ircord-client ircord://chat.example.com:6697
+```
+
 ## Config Location
 
 If no `--config` flag is passed, the client looks for config in the platform default directory:
@@ -72,9 +77,14 @@ verify_peer = true             # Verify server TLS certificate (keep true in pro
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message |
+| `Ctrl+V` | Paste clipboard text into the input line |
 | `Tab` | Autocomplete username / channel |
 | `PgUp` / `PgDn` | Scroll message history |
+| `F1` | Toggle voice mode (`PTT` / `VOX`) |
+| `F2` | Toggle the right-side user list |
+| `F12` | Open settings |
 | `Alt+1..9` | Switch to channel by number |
+| `Alt+Left` / `Alt+Right` | Cycle channels |
 | `/join #channel` | Join a channel |
 | `/part` | Leave current channel |
 | `/msg <user> <text>` | Send a private message |
@@ -92,7 +102,7 @@ verify_peer = true             # Verify server TLS certificate (keep true in pro
 ## Command Line Options
 
 ```
-ircord-client [OPTIONS]
+ircord-client [OPTIONS] [ircord://host:port]
 
 Options:
   --config <path>   Path to client.toml (default: platform config dir)
