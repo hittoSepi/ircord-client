@@ -45,6 +45,54 @@ void InputLine::move_right() {
 void InputLine::move_home() { cursor_ = 0; }
 void InputLine::move_end()  { cursor_ = buf_.size(); }
 
+bool InputLine::move_up() {
+    // Find the newline before cursor (end of previous line)
+    // If there's no newline before cursor, we're on the first line
+    if (cursor_ == 0) return false;
+
+    // Find start of current line
+    size_t cur_line_start = buf_.rfind(U'\n', cursor_ > 0 ? cursor_ - 1 : 0);
+    if (cur_line_start == std::u32string::npos) return false; // on first line
+
+    // Column within current line
+    size_t col = cursor_ - cur_line_start - 1;
+
+    // Find start of previous line
+    size_t prev_line_start = 0;
+    if (cur_line_start > 0) {
+        size_t p = buf_.rfind(U'\n', cur_line_start - 1);
+        prev_line_start = (p == std::u32string::npos) ? 0 : p + 1;
+    }
+
+    // Move cursor to same column on previous line (or end of prev line)
+    size_t prev_line_len = cur_line_start - prev_line_start;
+    cursor_ = prev_line_start + std::min(col, prev_line_len);
+    return true;
+}
+
+bool InputLine::move_down() {
+    // Find the newline after cursor (start of next line)
+    size_t next_nl = buf_.find(U'\n', cursor_);
+    if (next_nl == std::u32string::npos) return false; // on last line
+
+    // Column within current line
+    size_t cur_line_start = 0;
+    if (cursor_ > 0) {
+        size_t p = buf_.rfind(U'\n', cursor_ - 1);
+        cur_line_start = (p == std::u32string::npos) ? 0 : p + 1;
+    }
+    size_t col = cursor_ - cur_line_start;
+
+    // Find end of next line
+    size_t next_line_start = next_nl + 1;
+    size_t next_line_end = buf_.find(U'\n', next_line_start);
+    if (next_line_end == std::u32string::npos) next_line_end = buf_.size();
+
+    size_t next_line_len = next_line_end - next_line_start;
+    cursor_ = next_line_start + std::min(col, next_line_len);
+    return true;
+}
+
 void InputLine::history_prev() {
     if (history_.empty()) return;
     if (hist_pos_ == -1) {
@@ -146,7 +194,7 @@ std::u32string InputLine::from_utf8(const std::string& s) {
 
         i += bytes;
 
-        if (cp == U'\r' || cp == U'\n') continue;
+        if (cp == U'\r') continue;  // Strip \r, keep \n for multiline
         if (cp == U'\t') cp = U' ';
         if (cp < 32 || cp == 127) continue;
 

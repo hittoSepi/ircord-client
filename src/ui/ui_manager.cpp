@@ -488,9 +488,24 @@ Element UIManager::build_document(int term_rows) {
     // Update region tracking for mouse hit testing
     mouse_tracker_.set_tab_bar_region({0, 0, kTabBarHeight, term_cols});
     
-    // Dynamic input height based on text length
-    int input_text_display_len = static_cast<int>(input_line_.text().size()) + 2; // +2 for "> "
-    int input_lines = std::max(1, std::min(5, (input_text_display_len + term_cols - 1) / std::max(1, term_cols)));
+    // Compute visual input line count (handles wrapping + explicit newlines)
+    auto count_visual_lines = [](const std::string& txt, int cols) -> int {
+        if (cols <= 0) cols = 80;
+        int lines = 1, col = 2; // 2 for "> " prefix
+        for (size_t i = 0; i < txt.size(); ) {
+            unsigned char c = static_cast<unsigned char>(txt[i]);
+            if (c == '\n') { lines++; col = 0; i++; continue; }
+            int cp_len = 1;
+            if ((c & 0xE0) == 0xC0) cp_len = 2;
+            else if ((c & 0xF0) == 0xE0) cp_len = 3;
+            else if ((c & 0xF8) == 0xF0) cp_len = 4;
+            col++;
+            if (col > cols) { lines++; col = 1; }
+            i += cp_len;
+        }
+        return lines;
+    };
+    int input_lines = std::max(1, std::min(5, count_visual_lines(input_line_.text(), term_cols)));
     int msg_rows = std::max(1, term_rows - kTabBarHeight - kStatusBarHeight - input_lines - 2);  // -2 for separators
     int msg_y = kTabBarHeight + 1;  // After tab bar and separator
     
@@ -530,32 +545,87 @@ Element UIManager::build_document(int term_rows) {
     si.online_users   = state_.online_users();
     auto status_el = render_status_bar(si);
 
-    // Input line
+    // Input line — render with proper wrapping and multiline support
     std::string input_text = input_line_.text();
-    // Show block cursor — use byte offset for correct UTF-8 splitting
     int byte_off = input_line_.cursor_byte_offset();
-    std::string before = "> " + input_text.substr(0, byte_off);
-    // Find the byte length of the code point at cursor
-    std::string at, after;
-    if (byte_off < static_cast<int>(input_text.size())) {
-        unsigned char lead = static_cast<unsigned char>(input_text[byte_off]);
+
+    // Build full display string: "> " + input text
+    std::string full = "> " + input_text;
+    int cursor_in_full = 2 + byte_off; // byte offset of cursor in 'full'
+
+    // Split into visual lines (at explicit \n and wrapping at term_cols)
+    struct VLine { int start; int end; }; // byte offsets in 'full'
+    std::vector<VLine> vlines;
+    int col = 0, line_start = 0;
+    for (int i = 0; i < static_cast<int>(full.size()); ) {
+        unsigned char c = static_cast<unsigned char>(full[i]);
+        if (c == '\n') {
+            vlines.push_back({line_start, i});
+            i++;
+            line_start = i;
+            col = 0;
+            continue;
+        }
         int cp_len = 1;
-        if ((lead & 0xE0) == 0xC0) cp_len = 2;
-        else if ((lead & 0xF0) == 0xE0) cp_len = 3;
-        else if ((lead & 0xF8) == 0xF0) cp_len = 4;
-        at    = input_text.substr(byte_off, cp_len);
-        after = input_text.substr(byte_off + cp_len);
-    } else {
-        at    = " ";
-        after = "";
+        if ((c & 0xE0) == 0xC0) cp_len = 2;
+        else if ((c & 0xF0) == 0xE0) cp_len = 3;
+        else if ((c & 0xF8) == 0xF0) cp_len = 4;
+        col++;
+        if (col > term_cols) {
+            vlines.push_back({line_start, i});
+            line_start = i;
+            col = 1;
+        }
+        i += cp_len;
+    }
+    vlines.push_back({line_start, static_cast<int>(full.size())});
+
+    // Render each visual line, placing cursor on the correct one
+    Elements line_els;
+    bool cursor_placed = false;
+    for (auto& vl : vlines) {
+        std::string line_text = full.substr(vl.start, vl.end - vl.start);
+
+        if (!cursor_placed && cursor_in_full >= vl.start && cursor_in_full <= vl.end) {
+            cursor_placed = true;
+            int rel = cursor_in_full - vl.start;
+
+            if (rel < static_cast<int>(line_text.size())) {
+                // Cursor is within this line
+                std::string b = line_text.substr(0, rel);
+                unsigned char lead = static_cast<unsigned char>(line_text[rel]);
+                int cp_len = 1;
+                if ((lead & 0xE0) == 0xC0) cp_len = 2;
+                else if ((lead & 0xF0) == 0xE0) cp_len = 3;
+                else if ((lead & 0xF8) == 0xF0) cp_len = 4;
+                std::string a = line_text.substr(rel, cp_len);
+                std::string r = line_text.substr(rel + cp_len);
+                line_els.push_back(hbox({
+                    text(b) | color(palette::fg()),
+                    text(a) | color(palette::bg()) | bgcolor(palette::fg()),
+                    text(r) | color(palette::fg()),
+                }));
+            } else {
+                // Cursor at end of this line
+                line_els.push_back(hbox({
+                    text(line_text) | color(palette::fg()),
+                    text(" ") | color(palette::bg()) | bgcolor(palette::fg()),
+                }));
+            }
+        } else {
+            line_els.push_back(text(line_text) | color(palette::fg()));
+        }
     }
 
-    auto input_el = flexbox({
-        text(before) | color(palette::fg()),
-        text(at)     | color(palette::bg()) | bgcolor(palette::fg()),
-        text(after)  | color(palette::fg()),
-    }, FlexboxConfig().Set(FlexboxConfig::Wrap::Wrap))
-    | bgcolor(palette::bg()) | size(HEIGHT, LESS_THAN, input_lines + 1);
+    if (line_els.empty()) {
+        line_els.push_back(hbox({
+            text("> ") | color(palette::fg()),
+            text(" ") | color(palette::bg()) | bgcolor(palette::fg()),
+        }));
+    }
+
+    auto input_el = vbox(std::move(line_els))
+                    | bgcolor(palette::bg()) | size(HEIGHT, LESS_THAN, input_lines + 1);
 
     return vbox({
         tab_el,
@@ -620,6 +690,16 @@ void UIManager::run(SubmitFn on_submit,
             toggle_user_list();
             return true;
         }
+        // Insert newline: Alt+N (works on Windows Terminal),
+        // Alt+Enter (works on terminals that don't capture it),
+        // Shift+Enter / Ctrl+Enter (CSI-u / kitty protocol)
+        if (event.input() == "\x1bn" || event.input() == "\x1bN" ||
+            event.input() == "\x1b\r" || event.input() == "\x1b\n" ||
+            event.input() == "\x1b[13;2u" || event.input() == "\x1b[13;5u") {
+            tab_completer_.reset();
+            input_line_.insert(U'\n');
+            return true;
+        }
         if (event == Event::Return) {
             tab_completer_.reset();
             std::string line = input_line_.commit();
@@ -645,11 +725,15 @@ void UIManager::run(SubmitFn on_submit,
             return true;
         }
         if (event == Event::ArrowUp) {
-            input_line_.history_prev();
+            if (!input_line_.move_up()) {
+                input_line_.history_prev();
+            }
             return true;
         }
         if (event == Event::ArrowDown) {
-            input_line_.history_next();
+            if (!input_line_.move_down()) {
+                input_line_.history_next();
+            }
             return true;
         }
         if (event == Event::Home) {

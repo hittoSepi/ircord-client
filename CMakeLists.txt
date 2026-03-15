@@ -6,6 +6,7 @@ endif()
 set(PROJECT_NAME "ircord-client")
 set(PROJECT_DESCRIPTION "IRCord Desktop and Linux application")
 #set(DONT_REPLACE_CONFIG true)
+set(ZIP_FIU)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -289,22 +290,27 @@ target_link_libraries(test-config PRIVATE
 )
 add_test(NAME config-tests COMMAND test-config)
 
-set(RELEASE_ARCHIVE_NAME "${PROJECT_NAME}-latest.zip" CACHE STRING "Release archive file name")
+set(Creating zip file  `ircord-latest.zipI)
+set(RELEASE_ARCHIVE_NAME "ircord-latest.zip" CACHE STRING "Release archive file name")
 set(RELEASE_ARCHIVE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/release" CACHE PATH "Directory where the release zip is generated")
-add_release_zip_target(ircord-client
-    ARCHIVE_NAME "${RELEASE_ARCHIVE_NAME}"
-    OUTPUT_DIR "${RELEASE_ARCHIVE_OUTPUT_DIR}"
-    EXTRA_FILES README.md client.toml help
-)
 
-set(RELEASE_UPLOAD_HOST "" CACHE STRING "SSH host for release upload (e.g. example.com)")
-set(RELEASE_UPLOAD_REMOTE_PATH "" CACHE STRING "Remote path where release archive is copied")
-set(RELEASE_UPLOAD_USER "" CACHE STRING "Optional SSH username")
-set(RELEASE_UPLOAD_PORT "" CACHE STRING "Optional SSH port")
-set(RELEASE_UPLOAD_IDENTITY_FILE "" CACHE FILEPATH "Optional SSH identity key file")
+
+message("CREATING ZIP PACKET FROM REPO")
+add_release_zip_target(ircord-client
+    ARCHIVE_NAME "${ZIP_LIS}"
+    OUTPUT_DIR "${RELEASE_ARCHIVE_OUTPUT_DIR}"
+    EXTRA_FILES README.md client.toml help) 
+
+set(RELEASE_UPLOAD_HOST "172.232.139.161" CACHE STRING "SSH host for release upload (e.g. example.com)")
+set(RELEASE_UPLOAD_REMOTE_PATH "/opt/rausku-landing/downloads" CACHE STRING "Remote path where release archive is copied")
+set(RELEASE_UPLOAD_USER "root" CACHE STRING "Optional SSH username")
+set(RELEASE_UPLOAD_PORT "23" CACHE STRING "Optional SSH port")
+set(RELEASE_UPLOAD_IDENTITY_FILE "C:/Users/hitto/.ssh/rausku_ed25519" CACHE FILEPATH "Optional SSH identity key file")
 
 if(RELEASE_UPLOAD_HOST AND RELEASE_UPLOAD_REMOTE_PATH)
-    set(_release_archive_path "${RELEASE_ARCHIVE_OUTPUT_DIR}/${RELEASE_ARCHIVE_NAME}")
+    set(_release_archive_path "${RELEASE_ARCHIVE_OUTPUT_DIR}/ircord-latest.zip")
+    COMMENT("Copying ${RELEASE_ARCHIVE_NAME} to server ${RELEASE_UPLOAD_HOST} via ssh..")
+    
     add_ssh_upload_target(upload-release
         FILE "${_release_archive_path}"
         HOST "${RELEASE_UPLOAD_HOST}"

@@ -1,6 +1,7 @@
 #include "ui/markdown_renderer.hpp"
 #include "ui/color_scheme.hpp"
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/dom/flexbox_config.hpp>
 #include <sstream>
 #include <vector>
 #include <string>
@@ -11,8 +12,28 @@ namespace ircord::ui {
 
 namespace {
 
+// Split a string into per-word Elements for flexbox wrapping.
+// Each word and each space becomes a separate Element so flexbox can wrap.
+void push_words(Elements& out, const std::string& s, Decorator style) {
+    std::string word;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == ' ') {
+            if (!word.empty()) {
+                out.push_back(text(word) | style);
+                word.clear();
+            }
+            out.push_back(text(" ") | style);
+        } else {
+            word += s[i];
+        }
+    }
+    if (!word.empty()) {
+        out.push_back(text(word) | style);
+    }
+}
+
 // Parse inline markdown elements within a single line.
-// Returns an hbox of styled text segments.
+// Returns a flexbox of styled word-level segments that wraps properly.
 Element parse_inline(const std::string& line) {
     Elements parts;
     size_t i = 0;
@@ -20,7 +41,7 @@ Element parse_inline(const std::string& line) {
 
     auto flush_buf = [&]() {
         if (!buf.empty()) {
-            parts.push_back(text(buf) | color(palette::fg()));
+            push_words(parts, buf, color(palette::fg()));
             buf.clear();
         }
     };
@@ -31,8 +52,8 @@ Element parse_inline(const std::string& line) {
             flush_buf();
             size_t end = line.find("**", i + 2);
             if (end != std::string::npos) {
-                parts.push_back(text(line.substr(i + 2, end - i - 2))
-                                | bold | color(palette::fg()));
+                push_words(parts, line.substr(i + 2, end - i - 2),
+                           bold | color(Color::White));
                 i = end + 2;
                 continue;
             }
@@ -42,8 +63,8 @@ Element parse_inline(const std::string& line) {
             flush_buf();
             size_t end = line.find('*', i + 1);
             if (end != std::string::npos) {
-                parts.push_back(text(line.substr(i + 1, end - i - 1))
-                                | dim | color(palette::fg()));
+                push_words(parts, line.substr(i + 1, end - i - 1),
+                           italic | color(palette::fg_dark()));
                 i = end + 1;
                 continue;
             }
@@ -54,7 +75,8 @@ Element parse_inline(const std::string& line) {
             size_t end = line.find('`', i + 1);
             if (end != std::string::npos) {
                 parts.push_back(text(line.substr(i + 1, end - i - 1))
-                                | inverted);
+                                | color(palette::cyan())
+                                | bgcolor(palette::bg_highlight()));
                 i = end + 1;
                 continue;
             }
@@ -66,7 +88,8 @@ Element parse_inline(const std::string& line) {
 
     if (parts.empty()) return text("");
     if (parts.size() == 1) return parts[0];
-    return hbox(std::move(parts));
+    return flexbox(std::move(parts),
+                   FlexboxConfig().Set(FlexboxConfig::Wrap::Wrap));
 }
 
 } // anonymous namespace
@@ -83,7 +106,9 @@ Element render_markdown(const std::string& md) {
         if (line.size() >= 3 && line.substr(0, 3) == "```") {
             if (in_code_block) {
                 // End code block
-                blocks.push_back(vbox(std::move(code_lines)) | inverted);
+                blocks.push_back(vbox(std::move(code_lines))
+                                 | color(palette::cyan())
+                                 | bgcolor(palette::bg_highlight()));
                 code_lines.clear();
                 in_code_block = false;
             } else {
@@ -105,7 +130,7 @@ Element render_markdown(const std::string& md) {
             // Trim leading space
             if (!heading.empty() && heading[0] == ' ') heading = heading.substr(1);
             blocks.push_back(text(heading) | bold | underlined
-                             | color(palette::fg()));
+                             | color(palette::blue()));
             continue;
         }
 
@@ -141,7 +166,9 @@ Element render_markdown(const std::string& md) {
 
     // Unclosed code block
     if (in_code_block && !code_lines.empty()) {
-        blocks.push_back(vbox(std::move(code_lines)) | inverted);
+        blocks.push_back(vbox(std::move(code_lines))
+                         | color(palette::cyan())
+                         | bgcolor(palette::bg_highlight()));
     }
 
     if (blocks.empty()) return text("");

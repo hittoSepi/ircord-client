@@ -32,7 +32,8 @@ static Element render_one(const Message& msg, const std::string& ts_fmt) {
     if (msg.type == Message::Type::System || msg.type == Message::Type::VoiceEvent) {
         return hbox({
             ts_el,
-            render_markdown("* " + msg.content) | color(palette::yellow()) | flex,
+            text("• ") | color(palette::yellow()),
+            render_markdown(msg.content) | color(palette::yellow()) | flex,
         });
     }
 

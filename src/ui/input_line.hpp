@@ -26,6 +26,11 @@ public:
     void move_home();
     void move_end();
 
+    // Multiline navigation — returns true if cursor moved within text,
+    // false if already on the first/last line (caller should use history)
+    bool move_up();
+    bool move_down();
+
     // History navigation (ArrowUp / ArrowDown)
     void history_prev();
     void history_next();

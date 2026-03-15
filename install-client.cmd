@@ -17,4 +17,5 @@ cmake -S "%SOURCE_DIR%" -B "%BUILD_DIR%" -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scr
 if errorlevel 1 exit /b %errorlevel%
 
 cmake --build "%BUILD_DIR%" --config %BUILD_CONFIG% --target ircord-client
+
 exit /b %errorlevel%
