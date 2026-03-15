@@ -32,7 +32,7 @@ End-to-end encrypted chat and voice client for friend groups. Terminal UI with i
 4. If no username is set in the config, you will be prompted to enter one — it is saved automatically for future runs
 5. Enter your passphrase when prompted (new users: choose a passphrase; returning users: enter the same one you used before)
 
-> **Keep your passphrase safe.** It encrypts your identity key. Losing it means losing access to your account.
+> **Keep your passphrase safe.** It encrypts your identity key and is also used to re-bind your server-side identity if you reset local credentials.
 
 ## Quick Connect
 
@@ -190,7 +190,7 @@ cmake --build . --config Release
 ## Troubleshooting
 
 **"Crypto init failed (wrong passphrase?)"**
-You entered the wrong passphrase. Try again — there is no reset; the key is derived from your passphrase.
+You entered the wrong passphrase for your local identity. Try again, or use `--clear-creds` / `CLEAR CREDS` and then log back in with the same username and passphrase to re-sync keys on the server.
 
 **Connection refused / timeout**
 Check that `host` and `port` in `client.toml` match the server, and that the server is running.

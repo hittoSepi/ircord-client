@@ -63,6 +63,7 @@ ClientConfig load_config(const std::filesystem::path& path) {
             auto& id = data.at("identity");
             if (id.contains("user_id"))  cfg.identity.user_id  = toml::find<std::string>(id, "user_id");
             if (id.contains("key_file")) cfg.identity.key_file = toml::find<std::string>(id, "key_file");
+            if (id.contains("password")) cfg.identity.password = toml::find<std::string>(id, "password");
         }
 
         if (data.contains("ui")) {
@@ -185,9 +186,9 @@ bool clear_local_client_state(ClientConfig& cfg,
 
     if (status_message) {
         if (removed_count > 0) {
-            *status_message = "Local credentials and identity data cleared. Enter username and passkey again.";
+            *status_message = "Local credentials and identity data cleared. Enter the same username and passkey to re-sync keys.";
         } else {
-            *status_message = "No local credential files were found. Enter username and passkey again.";
+            *status_message = "No local credential files were found. Enter the same username and passkey to re-sync keys.";
         }
     }
 

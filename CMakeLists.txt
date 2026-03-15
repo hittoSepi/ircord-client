@@ -254,6 +254,14 @@ add_custom_command(TARGET ircord-client POST_BUILD
     COMMENT "Copying client.toml to output directory"
 )
 
+# Copy help files to build output directory
+add_custom_command(TARGET ircord-client POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/help"
+        "$<TARGET_FILE_DIR:ircord-client>/help"
+    COMMENT "Copying help/ to output directory"
+)
+
 
 enable_testing()
 
@@ -286,7 +294,7 @@ set(RELEASE_ARCHIVE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/release" CACHE PATH "Directo
 add_release_zip_target(ircord-client
     ARCHIVE_NAME "${RELEASE_ARCHIVE_NAME}"
     OUTPUT_DIR "${RELEASE_ARCHIVE_OUTPUT_DIR}"
-    EXTRA_FILES README.md client.toml
+    EXTRA_FILES README.md client.toml help
 )
 
 set(RELEASE_UPLOAD_HOST "" CACHE STRING "SSH host for release upload (e.g. example.com)")

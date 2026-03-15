@@ -255,6 +255,10 @@ bool App::init(const std::filesystem::path& config_path,
     }
 
     // ── Network ───────────────────────────────────────────────────────────
+    // Use the login passkey as the default recovery secret unless config overrides it.
+    if (cfg_.identity.password.empty()) {
+        cfg_.identity.password = login_creds.passkey;
+    }
     msg_handler_ = std::make_unique<net::MessageHandler>(state_, *crypto_, cfg_);
 
     net::NetCallbacks cb;
